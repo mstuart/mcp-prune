@@ -1,0 +1,7 @@
+{"timestamp":"2026-05-20T10:00:00Z","message":{"content":[{"type":"tool_use","name":"mcp__github__create_issue"}]}}
+{"timestamp":"2026-05-20T10:00:00Z","message":{"content":[{"type":"tool_use","name":"mcp__github__create_issue"}]}}
+{"timestamp":"2026-04-15T10:00:00Z","message":{"content":[{"type":"tool_use","name":"mcp__gsd-workflow__cancel"}]}}
+{"timestamp":"2026-05-20T10:00:00Z","attachment":{"type":"deferred_tools_delta","addedNames":["mcp__slack__send_message","mcp__github__list_repos"]}}
+{"timestamp":"2026-05-20T10:00:00Z","message":{"content":[{"type":"text","text":"the pattern mcp__servername__toolname is documented in the example"}]}}
+not valid json at all
+{"timestamp":"2026-05-20T10:00:00Z","message":{"content":[{"type":"text","text":"mcp__deferred-server__some_tool"}]}}

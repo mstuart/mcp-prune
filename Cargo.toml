@@ -1,14 +1,14 @@
 [package]
-name = "mcp-pulse"
+name = "mcp-prune"
 version = "0.1.0"
 edition = "2021"
 authors = ["Mark Stuart <mstuart@users.noreply.github.com>"]
-description = "Audit MCP server usage from Claude Code transcripts. Find idle servers to disable."
+description = "Audit MCP server usage from Claude Code transcripts. Find idle servers to prune."
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/mstuart/mcp-pulse"
-homepage = "https://github.com/mstuart/mcp-pulse"
-documentation = "https://github.com/mstuart/mcp-pulse#readme"
+repository = "https://github.com/mstuart/mcp-prune"
+homepage = "https://github.com/mstuart/mcp-prune"
+documentation = "https://github.com/mstuart/mcp-prune#readme"
 keywords = ["mcp", "claude-code", "anthropic", "audit", "telemetry"]
 categories = ["command-line-utilities", "development-tools"]
 

@@ -9,7 +9,7 @@ mod scan;
 
 #[derive(Parser)]
 #[command(
-    name = "mcp-pulse",
+    name = "mcp-prune",
     version,
     about = "Audit MCP server usage from Claude Code transcripts"
 )]

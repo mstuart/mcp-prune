@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -8,8 +8,6 @@ pub struct Config {
     pub warn_days: i64,
     #[serde(default = "default_alert_days")]
     pub alert_days: i64,
-    #[serde(default = "default_scan_window_days")]
-    pub scan_window_days: i64,
     #[serde(default = "default_transcripts_dir")]
     pub transcripts_dir: PathBuf,
     #[serde(default = "default_cache_path")]
@@ -22,9 +20,6 @@ fn default_warn_days() -> i64 {
 fn default_alert_days() -> i64 {
     14
 }
-fn default_scan_window_days() -> i64 {
-    30
-}
 fn default_transcripts_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_default()
@@ -36,7 +31,7 @@ fn default_cache_path() -> PathBuf {
         .unwrap_or_default()
         .join(".claude")
         .join("cache")
-        .join("mcp-pulse.json")
+        .join("mcp-prune.json")
 }
 
 impl Default for Config {
@@ -44,10 +39,28 @@ impl Default for Config {
         Self {
             warn_days: default_warn_days(),
             alert_days: default_alert_days(),
-            scan_window_days: default_scan_window_days(),
             transcripts_dir: default_transcripts_dir(),
             cache_path: default_cache_path(),
         }
+    }
+}
+
+impl Config {
+    pub fn validate(&self) -> Result<()> {
+        if self.warn_days < 0 {
+            bail!("warn_days must be >= 0 (got {})", self.warn_days);
+        }
+        if self.alert_days < 0 {
+            bail!("alert_days must be >= 0 (got {})", self.alert_days);
+        }
+        if self.alert_days < self.warn_days {
+            bail!(
+                "alert_days ({}) must be >= warn_days ({}) — otherwise the warn band is empty",
+                self.alert_days,
+                self.warn_days
+            );
+        }
+        Ok(())
     }
 }
 
@@ -60,12 +73,58 @@ pub fn load(override_path: Option<&Path>) -> Result<Config> {
     }
     let raw = std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let cfg: Config = toml::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    cfg.validate()
+        .with_context(|| format!("invalid config in {}", path.display()))?;
     Ok(cfg)
 }
 
 fn default_config_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".config"))
-        .join("mcp-pulse")
+        .join("mcp-prune")
         .join("config.toml")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_valid() {
+        Config::default().validate().unwrap();
+    }
+
+    #[test]
+    fn negative_thresholds_rejected() {
+        let cfg = Config {
+            warn_days: -1,
+            ..Default::default()
+        };
+        assert!(cfg.validate().is_err());
+        let cfg = Config {
+            alert_days: -1,
+            ..Default::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn alert_below_warn_rejected() {
+        let cfg = Config {
+            warn_days: 14,
+            alert_days: 7,
+            ..Default::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn equal_thresholds_accepted() {
+        let cfg = Config {
+            warn_days: 7,
+            alert_days: 7,
+            ..Default::default()
+        };
+        cfg.validate().unwrap();
+    }
 }

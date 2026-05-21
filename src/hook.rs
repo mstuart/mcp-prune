@@ -2,52 +2,91 @@ use crate::cache;
 use crate::config::Config;
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
+use std::fs::OpenOptions;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// SessionStart hook entry. Spawns a background scan, returns silent OK immediately.
 pub fn run(cfg: &Config) -> Result<()> {
-    // Slurp stdin in case the harness sends a payload; we don't use it but reading prevents SIGPIPE.
-    let mut _buf = String::new();
-    let _ = std::io::stdin().read_to_string(&mut _buf);
-
-    // Fire-and-forget background refresh if cache is stale or missing.
-    let cache_path = cfg.cache_path.clone();
-    let should_refresh = match cache::read(cfg) {
-        Ok(Some(_)) => {
-            let meta = std::fs::metadata(&cache_path);
-            meta.map(|m| {
-                m.modified()
-                    .map(|t| {
-                        t.elapsed()
-                            .map(|e| e.as_secs() > 60 * 60 * 12)
-                            .unwrap_or(true)
-                    })
-                    .unwrap_or(true)
-            })
-            .unwrap_or(true)
+    // Slurp stdin in case the harness sends a payload. We don't use it, but
+    // not reading risks SIGPIPE on the writing side.
+    let mut buf = String::new();
+    if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+        if e.kind() != std::io::ErrorKind::BrokenPipe {
+            eprintln!("mcp-prune hook: unexpected stdin error: {e}");
         }
-        _ => true,
-    };
+    }
 
-    if should_refresh {
-        if let Ok(exe) = std::env::current_exe() {
-            // Detached background process; ignore stdio.
-            let _ = Command::new(exe)
-                .arg("report")
-                .arg("--fresh")
-                .arg("--json")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn();
-        }
+    if should_refresh(cfg) {
+        spawn_background_refresh(cfg);
     }
 
     // Respond to the hook channel with a quiet OK.
     println!("{}", json!({"continue": true, "suppressOutput": true}));
     Ok(())
+}
+
+fn should_refresh(cfg: &Config) -> bool {
+    let meta = match std::fs::metadata(&cfg.cache_path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(e) => {
+            eprintln!("mcp-prune hook: cache stat failed: {e}");
+            return true;
+        }
+    };
+    let mtime = match meta.modified() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("mcp-prune hook: cache mtime unavailable: {e}");
+            return true;
+        }
+    };
+    match mtime.elapsed() {
+        Ok(age) => age.as_secs() > cache::CACHE_TTL_SECS,
+        Err(_) => true, // future mtime — treat as stale and refresh.
+    }
+}
+
+fn spawn_background_refresh(cfg: &Config) {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("mcp-prune hook: current_exe failed: {e}");
+            return;
+        }
+    };
+
+    // Redirect child stderr to a log file beside the cache so background-scan
+    // failures are observable. Falls back to Stdio::null if the file can't be
+    // opened.
+    let log_stderr = cfg
+        .cache_path
+        .parent()
+        .map(|d| d.join("mcp-prune.log"))
+        .and_then(|p| {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&p)
+                .ok()
+                .map(Stdio::from)
+        })
+        .unwrap_or_else(Stdio::null);
+
+    let spawn_result = Command::new(exe)
+        .arg("report")
+        .arg("--fresh")
+        .arg("--json")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(log_stderr)
+        .spawn();
+
+    if let Err(e) = spawn_result {
+        eprintln!("mcp-prune hook: could not spawn background refresh: {e}");
+    }
 }
 
 /// Installer: append a SessionStart hook entry to ~/.claude/settings.json.
@@ -90,7 +129,7 @@ pub fn install() -> Result<()> {
     });
 
     if already_present {
-        println!("mcp-pulse SessionStart hook already installed.");
+        println!("mcp-prune SessionStart hook already installed.");
         return Ok(());
     }
 
@@ -103,16 +142,16 @@ pub fn install() -> Result<()> {
 
     backup(&settings_path)?;
     let new_raw = serde_json::to_string_pretty(&settings)?;
-    std::fs::write(&settings_path, new_raw)?;
+    cache::atomic_write(&settings_path, new_raw.as_bytes())?;
     println!(
-        "Installed mcp-pulse SessionStart hook in {}",
+        "Installed mcp-prune SessionStart hook in {}",
         settings_path.display()
     );
     Ok(())
 }
 
 /// Installer: remove every SessionStart hook entry whose command ends with
-/// " hook" and contains "mcp-pulse" — matches install paths even if the binary
+/// " hook" and contains "mcp-prune" — matches install paths even if the binary
 /// has moved (e.g., reinstalled into a different prefix since `install`).
 pub fn uninstall() -> Result<()> {
     let settings_path = dirs::home_dir()
@@ -141,26 +180,26 @@ pub fn uninstall() -> Result<()> {
             let Some(cmd) = h.get("command").and_then(Value::as_str) else {
                 return false;
             };
-            cmd.contains("mcp-pulse") && cmd.trim_end().ends_with("hook")
+            cmd.contains("mcp-prune") && cmd.trim_end().ends_with("hook")
         })
     });
 
     if session_start.len() == before {
-        println!("mcp-pulse SessionStart hook not found — nothing to uninstall.");
+        println!("mcp-prune SessionStart hook not found — nothing to uninstall.");
         return Ok(());
     }
 
     backup(&settings_path)?;
     let new_raw = serde_json::to_string_pretty(&settings)?;
-    std::fs::write(&settings_path, new_raw)?;
+    cache::atomic_write(&settings_path, new_raw.as_bytes())?;
     println!(
-        "Removed mcp-pulse SessionStart hook from {}",
+        "Removed mcp-prune SessionStart hook from {}",
         settings_path.display()
     );
     Ok(())
 }
 
-fn backup(path: &PathBuf) -> Result<()> {
+fn backup(path: &Path) -> Result<()> {
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let backup_path = path.with_extension(format!("json.bak.{stamp}"));
     std::fs::copy(path, &backup_path)?;

@@ -1,5 +1,5 @@
 use crate::config::Config;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 use serde_json::Value;
@@ -50,10 +50,33 @@ pub fn scan_all(cfg: &Config) -> Result<ScanResult> {
     let transcripts = find_transcripts(&cfg.transcripts_dir);
     let now = Utc::now();
 
-    let partials: Vec<HashMap<String, ServerStats>> = transcripts
+    let results: Vec<(PathBuf, Result<HashMap<String, ServerStats>>)> = transcripts
         .par_iter()
-        .filter_map(|p| scan_file(p, now).ok())
+        .map(|p| (p.clone(), scan_file(p, now)))
         .collect();
+
+    let mut partials = Vec::with_capacity(results.len());
+    let mut failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
+    for (path, res) in results {
+        match res {
+            Ok(p) => partials.push(p),
+            Err(e) => failures.push((path, e)),
+        }
+    }
+
+    if !failures.is_empty() {
+        eprintln!(
+            "warning: {} of {} transcript files could not be scanned:",
+            failures.len(),
+            transcripts.len()
+        );
+        for (path, err) in failures.iter().take(5) {
+            eprintln!("  {}: {err}", path.display());
+        }
+        if failures.len() > 5 {
+            eprintln!("  … and {} more", failures.len() - 5);
+        }
+    }
 
     let mut merged: HashMap<String, ServerStats> = HashMap::new();
     for partial in partials {
@@ -74,7 +97,7 @@ pub fn scan_all(cfg: &Config) -> Result<ScanResult> {
 
     Ok(ScanResult {
         servers: merged,
-        transcripts_scanned: transcripts.len(),
+        transcripts_scanned: transcripts.len() - failures.len(),
         scanned_at: now,
     })
 }
@@ -97,11 +120,16 @@ fn scan_file(path: &Path, now: DateTime<Utc>) -> Result<HashMap<String, ServerSt
     for line in reader.lines() {
         let line = match line {
             Ok(l) => l,
-            Err(_) => continue,
+            // I/O error mid-stream means the remainder of this file is
+            // untrustworthy; bail rather than silently producing partial
+            // counts.
+            Err(e) => return Err(e).context("read line"),
         };
         if !line.contains("mcp__") {
             continue;
         }
+        // JSON parse errors are expected — Claude Code transcripts may include
+        // non-JSON debug lines. Skip and continue.
         let v: Value = match serde_json::from_str(&line) {
             Ok(x) => x,
             Err(_) => continue,
@@ -333,5 +361,82 @@ mod tests {
             extract_mcp_tokens(text),
             vec!["mcp__github__list_repos".to_string()]
         );
+    }
+
+    fn fixture_path(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name)
+    }
+
+    #[test]
+    fn scan_file_counts_tool_use_calls() {
+        // `now` chosen to put 2026-05-20 events inside the 7d window and
+        // 2026-04-15 outside the 30d window.
+        let now = DateTime::parse_from_rfc3339("2026-05-22T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let result = scan_file(&fixture_path("sample.jsonl"), now).unwrap();
+
+        let github = result.get("github").expect("github should be present");
+        assert_eq!(github.calls_total, 2, "two tool_use events for github");
+        assert_eq!(github.calls_7d, 2);
+        assert_eq!(github.calls_14d, 2);
+        assert_eq!(github.calls_30d, 2);
+        assert!(github.configured);
+
+        let gsd = result.get("gsd-workflow").expect("gsd-workflow present");
+        assert_eq!(gsd.calls_total, 1);
+        assert_eq!(gsd.calls_7d, 0, "2026-04-15 is outside 7d from 2026-05-22");
+        assert_eq!(gsd.calls_14d, 0);
+        assert_eq!(gsd.calls_30d, 0, "37 days idle is outside 30d window");
+    }
+
+    #[test]
+    fn scan_file_marks_attachment_servers_configured_without_calls() {
+        let now = DateTime::parse_from_rfc3339("2026-05-22T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let result = scan_file(&fixture_path("sample.jsonl"), now).unwrap();
+
+        // `slack` only appears in attachment.addedNames, never as a tool_use.
+        let slack = result.get("slack").expect("slack should be configured");
+        assert!(slack.configured);
+        assert_eq!(slack.calls_total, 0, "addedNames is not a call");
+    }
+
+    #[test]
+    fn scan_file_ignores_placeholder_text_and_invalid_json() {
+        let now = DateTime::parse_from_rfc3339("2026-05-22T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let result = scan_file(&fixture_path("sample.jsonl"), now).unwrap();
+
+        // "mcp__servername__toolname" in prose must not produce a "servername" entry.
+        assert!(
+            !result.contains_key("servername"),
+            "placeholder names must not register as servers"
+        );
+        // Non-JSON line ("not valid json at all") must not crash the scan.
+        // The fixture contains a valid line after it; if we got here without
+        // panicking and have a non-empty result, parsing recovered.
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn scan_file_picks_up_line_prefix_fallback() {
+        let now = DateTime::parse_from_rfc3339("2026-05-22T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let result = scan_file(&fixture_path("sample.jsonl"), now).unwrap();
+
+        // The text item "mcp__deferred-server__some_tool" at line-start should
+        // register as configured via the text fallback path.
+        let deferred = result
+            .get("deferred-server")
+            .expect("line-prefix fallback should catch this");
+        assert!(deferred.configured);
+        assert_eq!(deferred.calls_total, 0);
     }
 }

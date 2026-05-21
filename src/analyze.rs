@@ -89,15 +89,24 @@ fn classify(total: u64, days_idle: Option<i64>, cfg: &Config) -> Status {
                 Status::Alert
             }
         }
-        Some(d) if d >= cfg.alert_days => Status::Alert,
-        Some(d) if d >= cfg.warn_days => Status::Warn,
-        Some(_) => Status::Ok,
+        // Future-dated timestamps (clock skew) clamp to "just called" rather
+        // than wrap into Alert.
+        Some(d) => {
+            let d = d.max(0);
+            if d >= cfg.alert_days {
+                Status::Alert
+            } else if d >= cfg.warn_days {
+                Status::Warn
+            } else {
+                Status::Ok
+            }
+        }
     }
 }
 
 pub fn print_table(report: &Report) {
     println!(
-        "MCP Pulse — scanned {} transcripts at {}",
+        "mcp-prune — scanned {} transcripts at {}",
         report.transcripts_scanned,
         report.scanned_at.format("%Y-%m-%d %H:%M UTC")
     );
@@ -221,5 +230,13 @@ mod tests {
         assert_eq!(classify(10, Some(2), &cfg), Status::Ok);
         assert_eq!(classify(10, Some(3), &cfg), Status::Warn);
         assert_eq!(classify(10, Some(5), &cfg), Status::Alert);
+    }
+
+    #[test]
+    fn future_dated_timestamps_clamp_to_ok() {
+        // Clock skew: a timestamp in the future yields negative days_idle.
+        // Should classify as Ok (just called), not wrap around into Alert.
+        assert_eq!(classify(10, Some(-3), &cfg()), Status::Ok);
+        assert_eq!(classify(10, Some(-365), &cfg()), Status::Ok);
     }
 }
