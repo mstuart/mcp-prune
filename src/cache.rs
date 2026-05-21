@@ -39,7 +39,11 @@ pub fn read_or_scan(cfg: &Config) -> Result<Report> {
 
 fn is_stale(cfg: &Config, _report: &Report) -> Result<bool> {
     let meta = fs::metadata(&cfg.cache_path)?;
-    let mtime = meta.modified()?.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let mtime = meta
+        .modified()?
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     Ok(now.saturating_sub(mtime) > CACHE_TTL_SECS)
 }

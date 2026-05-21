@@ -1,5 +1,8 @@
 # mcp-pulse
 
+[![CI](https://github.com/mstuart/mcp-pulse/actions/workflows/ci.yml/badge.svg)](https://github.com/mstuart/mcp-pulse/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Audit MCP server usage from Claude Code transcripts. Find idle servers so you
 can prune them and stop loading their tool schemas into every conversation.
 
@@ -26,21 +29,27 @@ mcp-pulse report --json   # same, machine-readable
 mcp-pulse report --fresh  # bypass the 24h cache, rescan transcripts
 mcp-pulse idle            # only servers in warn/alert/unused state
 mcp-pulse config-show     # print resolved config
+mcp-pulse uninstall       # remove the SessionStart hook
 ```
 
 Sample:
 
 ```
-MCP Pulse — scanned 1975 transcripts at 2026-05-21 10:41 UTC
+MCP Pulse — scanned 1990 transcripts at 2026-05-21 11:38 UTC
 Thresholds: warn ≥7d  alert ≥14d
 
-server                            7d     14d     30d    total    last (d)  status
-----------------------------------------------------------------------------------------
-gcp-observability                 66      66     345      384           3  ok
-gsd-workflow                       0       0      94       94          14  ALERT
-plugin_playwright_playwright       0       0      30      374          25  ALERT
-github                             0       0       6        9          18  ALERT
-vexp                               0       0       0        0           —  UNUSED
+server                                    7d     14d     30d    total    last (d)  status
+------------------------------------------------------------------------------------------------
+gcp-observability                         66      66     345      384           3  ok
+gsd-workflow                               0       0      94       94          14  ALERT
+grove                                     35      35      35       35           3  ok
+plugin_playwright_playwright               0       0      30      374          25  ALERT
+github                                     0       0       6        9          18  ALERT
+plugin_context7_context7                   2       2       2       15           0  ok
+bullmq                                     0       0       1       29          27  ALERT
+plugin_slack_slack                         0       0       0        0           —  UNUSED
+plugin_vercel_vercel                       0       0       0        0           —  UNUSED
+vexp                                       0       0       0        0           —  UNUSED
 ```
 
 ## How it classifies
@@ -78,12 +87,37 @@ near-instant. Cache TTL is 24 hours.
 ## How it works
 
 1. `walkdir` enumerates every `.jsonl` under the transcripts dir
-2. `rayon` parses files in parallel — ~1975 transcripts in 0.8s on an M-series Mac
+2. `rayon` parses files in parallel — ~2000 transcripts in <1s on an M-series Mac
 3. For each line containing `mcp__`:
-   - Counts `tool_use` events as real calls
-   - Tracks server appearances in deferred-tool listings as `configured = true`
+   - Counts `tool_use` events as real calls (authoritative usage signal)
+   - Reads `attachment.addedNames` arrays to mark servers as `configured`
+     (the actual MCP tool manifest Claude Code attached that turn)
+   - Falls back to scanning line-prefix `mcp__` tokens in message text for
+     servers that surface via system reminders
 4. Aggregates per-server stats (7d / 14d / 30d / total) and last-call timestamp
 5. Classifies each server against the warn/alert thresholds
+
+Inline doc mentions like `` `mcp__servername__toolname` `` are deliberately
+ignored — only attached tool names and line-start references count, so
+discussions about the tool itself don't pollute the report.
+
+## Privacy
+
+`mcp-pulse` runs entirely locally. It reads JSONL transcripts from your own
+`~/.claude/projects/` directory, writes a JSON cache to
+`~/.claude/cache/mcp-pulse.json`, and prints to stdout. **No network calls, no
+telemetry, no external services.** The tool never opens a socket. Source is
+small (<600 lines of Rust) and worth a skim if you want to verify.
+
+## Compared to alternatives
+
+[nnnkkk7/mcp-tidy](https://github.com/nnnkkk7/mcp-tidy) is the existing
+Node.js tool in this space. It manages MCP server configuration (enable /
+disable / install) but doesn't report usage data — you decide what to prune
+based on memory, not measurements. `mcp-pulse` is the inverse: it doesn't
+edit your config, it just gives you the receipts for what's actually called
+versus what's loaded. Pair them: `mcp-pulse idle` to find the dead weight,
+`mcp-tidy` (or `claude mcp remove`) to act on it.
 
 ## Why this exists
 

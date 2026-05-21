@@ -2,8 +2,15 @@
 name = "mcp-pulse"
 version = "0.1.0"
 edition = "2021"
-description = "Audit MCP server usage from Claude Code transcripts. Find idle servers."
+authors = ["Mark Stuart <mstuart@users.noreply.github.com>"]
+description = "Audit MCP server usage from Claude Code transcripts. Find idle servers to disable."
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/mstuart/mcp-pulse"
+homepage = "https://github.com/mstuart/mcp-pulse"
+documentation = "https://github.com/mstuart/mcp-pulse#readme"
+keywords = ["mcp", "claude-code", "anthropic", "audit", "telemetry"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

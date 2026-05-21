@@ -65,7 +65,11 @@ pub fn build(scan: ScanResult, cfg: &Config) -> Result<Report> {
             }
         })
         .collect();
-    servers.sort_by(|a, b| b.calls_30d.cmp(&a.calls_30d).then_with(|| a.server.cmp(&b.server)));
+    servers.sort_by(|a, b| {
+        b.calls_30d
+            .cmp(&a.calls_30d)
+            .then_with(|| a.server.cmp(&b.server))
+    });
 
     Ok(Report {
         scanned_at: now,
@@ -79,7 +83,11 @@ pub fn build(scan: ScanResult, cfg: &Config) -> Result<Report> {
 fn classify(total: u64, days_idle: Option<i64>, cfg: &Config) -> Status {
     match days_idle {
         None => {
-            if total == 0 { Status::Unused } else { Status::Alert }
+            if total == 0 {
+                Status::Unused
+            } else {
+                Status::Alert
+            }
         }
         Some(d) if d >= cfg.alert_days => Status::Alert,
         Some(d) if d >= cfg.warn_days => Status::Warn,
@@ -88,23 +96,56 @@ fn classify(total: u64, days_idle: Option<i64>, cfg: &Config) -> Status {
 }
 
 pub fn print_table(report: &Report) {
-    println!("MCP Pulse — scanned {} transcripts at {}", report.transcripts_scanned, report.scanned_at.format("%Y-%m-%d %H:%M UTC"));
-    println!("Thresholds: warn ≥{}d  alert ≥{}d\n", report.warn_days, report.alert_days);
+    println!(
+        "MCP Pulse — scanned {} transcripts at {}",
+        report.transcripts_scanned,
+        report.scanned_at.format("%Y-%m-%d %H:%M UTC")
+    );
+    println!(
+        "Thresholds: warn ≥{}d  alert ≥{}d\n",
+        report.warn_days, report.alert_days
+    );
 
-    let name_w = report.servers.iter().map(|s| s.server.len()).max().unwrap_or(10).max(10);
-    println!("{:<width$}  {:>6}  {:>6}  {:>6}  {:>7}  {:>10}  {}",
-        "server", "7d", "14d", "30d", "total", "last (d)", "status", width = name_w);
+    let name_w = report
+        .servers
+        .iter()
+        .map(|s| s.server.len())
+        .max()
+        .unwrap_or(10)
+        .max(10);
+    println!(
+        "{:<width$}  {:>6}  {:>6}  {:>6}  {:>7}  {:>10}  status",
+        "server",
+        "7d",
+        "14d",
+        "30d",
+        "total",
+        "last (d)",
+        width = name_w
+    );
     println!("{}", "-".repeat(name_w + 60));
     for s in &report.servers {
-        let last = s.days_since_last.map(|d| format!("{d}")).unwrap_or_else(|| "—".to_string());
+        let last = s
+            .days_since_last
+            .map(|d| format!("{d}"))
+            .unwrap_or_else(|| "—".to_string());
         let badge = match s.status {
             Status::Ok => "ok",
             Status::Warn => "WARN",
             Status::Alert => "ALERT",
             Status::Unused => "UNUSED",
         };
-        println!("{:<width$}  {:>6}  {:>6}  {:>6}  {:>7}  {:>10}  {}",
-            s.server, s.calls_7d, s.calls_14d, s.calls_30d, s.calls_total, last, badge, width = name_w);
+        println!(
+            "{:<width$}  {:>6}  {:>6}  {:>6}  {:>7}  {:>10}  {}",
+            s.server,
+            s.calls_7d,
+            s.calls_14d,
+            s.calls_30d,
+            s.calls_total,
+            last,
+            badge,
+            width = name_w
+        );
     }
 }
 
@@ -114,7 +155,71 @@ pub fn print_idle(idle: &[&ServerReport]) {
         return;
     }
     for s in idle {
-        let last = s.days_since_last.map(|d| format!("{d}d idle")).unwrap_or_else(|| "never called".to_string());
-        println!("[{}] {} — {}, {} total calls", s.status.label().to_uppercase(), s.server, last, s.calls_total);
+        let last = s
+            .days_since_last
+            .map(|d| format!("{d}d idle"))
+            .unwrap_or_else(|| "never called".to_string());
+        println!(
+            "[{}] {} — {}, {} total calls",
+            s.status.label().to_uppercase(),
+            s.server,
+            last,
+            s.calls_total
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> Config {
+        Config {
+            warn_days: 7,
+            alert_days: 14,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn never_called_with_zero_total_is_unused() {
+        assert_eq!(classify(0, None, &cfg()), Status::Unused);
+    }
+
+    #[test]
+    fn never_called_with_prior_calls_is_alert() {
+        // Counted calls but no parseable timestamp — treat as stale.
+        assert_eq!(classify(5, None, &cfg()), Status::Alert);
+    }
+
+    #[test]
+    fn recent_activity_is_ok() {
+        assert_eq!(classify(10, Some(0), &cfg()), Status::Ok);
+        assert_eq!(classify(10, Some(6), &cfg()), Status::Ok);
+    }
+
+    #[test]
+    fn warn_window_starts_at_warn_days() {
+        assert_eq!(classify(10, Some(7), &cfg()), Status::Warn);
+        assert_eq!(classify(10, Some(13), &cfg()), Status::Warn);
+    }
+
+    #[test]
+    fn alert_threshold_is_inclusive() {
+        assert_eq!(classify(10, Some(14), &cfg()), Status::Alert);
+        assert_eq!(classify(10, Some(30), &cfg()), Status::Alert);
+        assert_eq!(classify(10, Some(365), &cfg()), Status::Alert);
+    }
+
+    #[test]
+    fn custom_thresholds_are_honored() {
+        let cfg = Config {
+            warn_days: 3,
+            alert_days: 5,
+            ..Default::default()
+        };
+        assert_eq!(classify(10, Some(2), &cfg), Status::Ok);
+        assert_eq!(classify(10, Some(3), &cfg), Status::Warn);
+        assert_eq!(classify(10, Some(5), &cfg), Status::Alert);
     }
 }

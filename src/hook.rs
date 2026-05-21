@@ -19,7 +19,11 @@ pub fn run(cfg: &Config) -> Result<()> {
             let meta = std::fs::metadata(&cache_path);
             meta.map(|m| {
                 m.modified()
-                    .map(|t| t.elapsed().map(|e| e.as_secs() > 60 * 60 * 12).unwrap_or(true))
+                    .map(|t| {
+                        t.elapsed()
+                            .map(|e| e.as_secs() > 60 * 60 * 12)
+                            .unwrap_or(true)
+                    })
                     .unwrap_or(true)
             })
             .unwrap_or(true)
@@ -69,14 +73,19 @@ pub fn install() -> Result<()> {
     let session_start = hooks_obj
         .entry("SessionStart".to_string())
         .or_insert_with(|| json!([]));
-    let arr = session_start.as_array_mut().context("SessionStart not array")?;
+    let arr = session_start
+        .as_array_mut()
+        .context("SessionStart not array")?;
 
     let cmd = format!("{} hook", exe_str);
     let already_present = arr.iter().any(|entry| {
         entry
             .get("hooks")
             .and_then(Value::as_array)
-            .map(|hs| hs.iter().any(|h| h.get("command").and_then(Value::as_str) == Some(cmd.as_str())))
+            .map(|hs| {
+                hs.iter()
+                    .any(|h| h.get("command").and_then(Value::as_str) == Some(cmd.as_str()))
+            })
             .unwrap_or(false)
     });
 
@@ -95,7 +104,59 @@ pub fn install() -> Result<()> {
     backup(&settings_path)?;
     let new_raw = serde_json::to_string_pretty(&settings)?;
     std::fs::write(&settings_path, new_raw)?;
-    println!("Installed mcp-pulse SessionStart hook in {}", settings_path.display());
+    println!(
+        "Installed mcp-pulse SessionStart hook in {}",
+        settings_path.display()
+    );
+    Ok(())
+}
+
+/// Installer: remove every SessionStart hook entry whose command ends with
+/// " hook" and contains "mcp-pulse" — matches install paths even if the binary
+/// has moved (e.g., reinstalled into a different prefix since `install`).
+pub fn uninstall() -> Result<()> {
+    let settings_path = dirs::home_dir()
+        .context("no home dir")?
+        .join(".claude")
+        .join("settings.json");
+    let raw = std::fs::read_to_string(&settings_path)
+        .with_context(|| format!("read {}", settings_path.display()))?;
+    let mut settings: Value = serde_json::from_str(&raw).context("parse settings.json")?;
+
+    let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
+        println!("No hooks block in settings.json — nothing to uninstall.");
+        return Ok(());
+    };
+    let Some(session_start) = hooks.get_mut("SessionStart").and_then(Value::as_array_mut) else {
+        println!("No SessionStart hooks — nothing to uninstall.");
+        return Ok(());
+    };
+
+    let before = session_start.len();
+    session_start.retain(|entry| {
+        let Some(hs) = entry.get("hooks").and_then(Value::as_array) else {
+            return true;
+        };
+        !hs.iter().any(|h| {
+            let Some(cmd) = h.get("command").and_then(Value::as_str) else {
+                return false;
+            };
+            cmd.contains("mcp-pulse") && cmd.trim_end().ends_with("hook")
+        })
+    });
+
+    if session_start.len() == before {
+        println!("mcp-pulse SessionStart hook not found — nothing to uninstall.");
+        return Ok(());
+    }
+
+    backup(&settings_path)?;
+    let new_raw = serde_json::to_string_pretty(&settings)?;
+    std::fs::write(&settings_path, new_raw)?;
+    println!(
+        "Removed mcp-pulse SessionStart hook from {}",
+        settings_path.display()
+    );
     Ok(())
 }
 

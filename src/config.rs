@@ -16,14 +16,27 @@ pub struct Config {
     pub cache_path: PathBuf,
 }
 
-fn default_warn_days() -> i64 { 7 }
-fn default_alert_days() -> i64 { 14 }
-fn default_scan_window_days() -> i64 { 30 }
+fn default_warn_days() -> i64 {
+    7
+}
+fn default_alert_days() -> i64 {
+    14
+}
+fn default_scan_window_days() -> i64 {
+    30
+}
 fn default_transcripts_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".claude").join("projects")
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".claude")
+        .join("projects")
 }
 fn default_cache_path() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".claude").join("cache").join("mcp-pulse.json")
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".claude")
+        .join("cache")
+        .join("mcp-pulse.json")
 }
 
 impl Default for Config {
@@ -39,7 +52,9 @@ impl Default for Config {
 }
 
 pub fn load(override_path: Option<&Path>) -> Result<Config> {
-    let path = override_path.map(PathBuf::from).unwrap_or_else(default_config_path);
+    let path = override_path
+        .map(PathBuf::from)
+        .unwrap_or_else(default_config_path);
     if !path.exists() {
         return Ok(Config::default());
     }

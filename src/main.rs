@@ -8,7 +8,11 @@ mod hook;
 mod scan;
 
 #[derive(Parser)]
-#[command(name = "mcp-pulse", version, about = "Audit MCP server usage from Claude Code transcripts")]
+#[command(
+    name = "mcp-pulse",
+    version,
+    about = "Audit MCP server usage from Claude Code transcripts"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -39,6 +43,9 @@ enum Command {
     #[command(about = "Install the SessionStart hook in ~/.claude/settings.json")]
     Install,
 
+    #[command(about = "Remove the SessionStart hook from ~/.claude/settings.json")]
+    Uninstall,
+
     #[command(about = "Show resolved config")]
     ConfigShow,
 }
@@ -65,7 +72,11 @@ fn main() -> Result<()> {
         }
         Command::Idle { json } => {
             let report = cache::read_or_scan(&cfg)?;
-            let idle: Vec<_> = report.servers.iter().filter(|s| s.status != analyze::Status::Ok).collect();
+            let idle: Vec<_> = report
+                .servers
+                .iter()
+                .filter(|s| s.status != analyze::Status::Ok)
+                .collect();
             if json {
                 println!("{}", serde_json::to_string_pretty(&idle)?);
             } else {
@@ -77,6 +88,9 @@ fn main() -> Result<()> {
         }
         Command::Install => {
             hook::install()?;
+        }
+        Command::Uninstall => {
+            hook::uninstall()?;
         }
         Command::ConfigShow => {
             println!("{}", toml::to_string_pretty(&cfg)?);
