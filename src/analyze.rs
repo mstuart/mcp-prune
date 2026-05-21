@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::scan::ScanResult;
+use crate::style;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -11,17 +12,6 @@ pub enum Status {
     Warn,
     Alert,
     Unused,
-}
-
-impl Status {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Status::Ok => "ok",
-            Status::Warn => "warn",
-            Status::Alert => "alert",
-            Status::Unused => "unused",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,78 +94,176 @@ fn classify(total: u64, days_idle: Option<i64>, cfg: &Config) -> Status {
     }
 }
 
-pub fn print_table(report: &Report) {
-    println!(
-        "mcp-prune — scanned {} transcripts at {}",
-        report.transcripts_scanned,
-        report.scanned_at.format("%Y-%m-%d %H:%M UTC")
-    );
-    println!(
-        "Thresholds: warn ≥{}d  alert ≥{}d\n",
-        report.warn_days, report.alert_days
-    );
+fn glyph(status: Status) -> String {
+    match status {
+        Status::Ok => style::green("●"),
+        Status::Warn => style::amber("◐"),
+        Status::Alert => style::red("○"),
+        Status::Unused => style::violet("⌀"),
+    }
+}
 
-    let name_w = report
-        .servers
+fn section_title(status: Status, count: usize, warn_days: i64, alert_days: i64) -> String {
+    let label = match status {
+        Status::Ok => format!(
+            "active ({} server{})",
+            count,
+            if count == 1 { "" } else { "s" }
+        ),
+        Status::Warn => format!("idle ≥{}d ({})", warn_days, count),
+        Status::Alert => format!("idle ≥{}d ({})", alert_days, count),
+        Status::Unused => format!("never called ({})", count),
+    };
+    format!("{}  {}", glyph(status), style::bold(&label))
+}
+
+pub fn print_header(report: &Report) {
+    let meta = format!(
+        "{} transcripts · {}",
+        report.transcripts_scanned,
+        report.scanned_at.format("%Y-%m-%d %H:%M UTC"),
+    );
+    println!("{}  {}", style::bold("mcp-prune"), style::dim(&meta),);
+    println!(
+        "{}",
+        style::dim(&format!(
+            "warn ≥{}d  ·  alert ≥{}d",
+            report.warn_days, report.alert_days
+        ))
+    );
+    println!();
+}
+
+pub fn print_table(report: &Report) {
+    print_header(report);
+
+    let groups = [Status::Ok, Status::Warn, Status::Alert, Status::Unused];
+    for (i, status) in groups.iter().enumerate() {
+        let rows: Vec<&ServerReport> = report
+            .servers
+            .iter()
+            .filter(|s| s.status == *status)
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        if i != 0 {
+            println!();
+        }
+        println!(
+            "  {}",
+            section_title(*status, rows.len(), report.warn_days, report.alert_days)
+        );
+        print_rows(&rows);
+    }
+    println!();
+    print_footer(report);
+}
+
+fn print_rows(rows: &[&ServerReport]) {
+    let name_w = rows
         .iter()
         .map(|s| s.server.len())
         .max()
         .unwrap_or(10)
-        .max(10);
-    println!(
-        "{:<width$}  {:>6}  {:>6}  {:>6}  {:>7}  {:>10}  status",
-        "server",
-        "7d",
-        "14d",
-        "30d",
-        "total",
-        "last (d)",
-        width = name_w
-    );
-    println!("{}", "-".repeat(name_w + 60));
-    for s in &report.servers {
+        .max(20);
+    for s in rows {
         let last = s
             .days_since_last
-            .map(|d| format!("{d}"))
+            .map(|d| format!("{}d", d.max(0)))
             .unwrap_or_else(|| "—".to_string());
-        let badge = match s.status {
-            Status::Ok => "ok",
-            Status::Warn => "WARN",
-            Status::Alert => "ALERT",
-            Status::Unused => "UNUSED",
+        let last_painted = match s.status {
+            Status::Ok => style::dim(&last),
+            Status::Warn => style::amber(&last),
+            Status::Alert => style::red(&last),
+            Status::Unused => style::dim(&last),
+        };
+        let total = if s.calls_total == 0 {
+            style::dim("0 calls")
+        } else {
+            format!("{} calls", s.calls_total)
+        };
+        let recent = if s.calls_7d > 0 {
+            format!("{} in 7d", s.calls_7d)
+        } else if s.calls_30d > 0 {
+            style::dim(&format!("{} in 30d", s.calls_30d))
+        } else {
+            style::dim("—")
         };
         println!(
-            "{:<width$}  {:>6}  {:>6}  {:>6}  {:>7}  {:>10}  {}",
+            "     {:<width$}  {:>5}   {:<10}  {}",
             s.server,
-            s.calls_7d,
-            s.calls_14d,
-            s.calls_30d,
-            s.calls_total,
-            last,
-            badge,
+            last_painted,
+            total,
+            recent,
             width = name_w
         );
     }
 }
 
+fn print_footer(report: &Report) {
+    let idle_count = report
+        .servers
+        .iter()
+        .filter(|s| s.status != Status::Ok)
+        .count();
+    if idle_count == 0 {
+        println!("  {}", style::dim("→ no idle servers · nothing to prune"));
+    } else {
+        let msg = format!(
+            "→ {} server{} idle · run `mcp-prune apply` to review and remove",
+            idle_count,
+            if idle_count == 1 { "" } else { "s" }
+        );
+        println!("  {}", style::cyan(&msg));
+    }
+}
+
 pub fn print_idle(idle: &[&ServerReport]) {
     if idle.is_empty() {
-        println!("No idle MCP servers. All configured servers used recently.");
+        println!();
+        println!(
+            "  {}  {}",
+            style::green("●"),
+            style::bold("no idle MCP servers")
+        );
+        println!("  {}", style::dim("all configured servers used recently"));
+        println!();
         return;
     }
-    for s in idle {
-        let last = s
-            .days_since_last
-            .map(|d| format!("{d}d idle"))
-            .unwrap_or_else(|| "never called".to_string());
-        println!(
-            "[{}] {} — {}, {} total calls",
-            s.status.label().to_uppercase(),
-            s.server,
-            last,
-            s.calls_total
-        );
+
+    println!();
+    let groups = [Status::Warn, Status::Alert, Status::Unused];
+    let mut first = true;
+    for status in groups {
+        let rows: Vec<&ServerReport> = idle
+            .iter()
+            .copied()
+            .filter(|s| s.status == status)
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        if !first {
+            println!();
+        }
+        first = false;
+        let title = match status {
+            Status::Warn => format!("warning ({})", rows.len()),
+            Status::Alert => format!("alert ({})", rows.len()),
+            Status::Unused => format!("never called ({})", rows.len()),
+            _ => String::new(),
+        };
+        println!("  {}  {}", glyph(status), style::bold(&title));
+        print_rows(&rows);
     }
+    println!();
+    let msg = format!(
+        "→ {} idle · run `mcp-prune apply` to review and remove",
+        idle.len()
+    );
+    println!("  {}", style::cyan(&msg));
+    println!();
 }
 
 #[cfg(test)]

@@ -2,10 +2,12 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod analyze;
+mod apply;
 mod cache;
 mod config;
 mod hook;
 mod scan;
+mod style;
 
 #[derive(Parser)]
 #[command(
@@ -37,6 +39,14 @@ enum Command {
         json: bool,
     },
 
+    #[command(about = "Review idle servers and remove them via `claude mcp remove`")]
+    Apply {
+        #[arg(long, help = "Print what would be removed without doing it")]
+        dry_run: bool,
+        #[arg(long = "yes", short = 'y', help = "Skip confirmation prompts")]
+        assume_yes: bool,
+    },
+
     #[command(about = "SessionStart hook entry — silent, writes cache")]
     Hook,
 
@@ -52,6 +62,7 @@ enum Command {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    style::init();
     let cfg = config::load(cli.config.as_deref())?;
 
     match cli.command {
@@ -92,6 +103,19 @@ fn main() -> Result<()> {
                     .collect();
                 analyze::print_idle(&idle);
             }
+        }
+        Command::Apply {
+            dry_run,
+            assume_yes,
+        } => {
+            let report = cache::read_or_scan(&cfg)?;
+            apply::run(
+                &report,
+                apply::ApplyOpts {
+                    dry_run,
+                    assume_yes,
+                },
+            )?;
         }
         Command::Hook => {
             hook::run(&cfg)?;

@@ -24,34 +24,57 @@ The installer creates a timestamped backup of `settings.json` before writing.
 ## Usage
 
 ```sh
-mcp-prune report          # full table — all servers, sorted by 30d calls
-mcp-prune report --json   # same, machine-readable
-mcp-prune report --fresh  # bypass the 24h cache, rescan transcripts
-mcp-prune idle            # only servers in warn/alert/unused state
-mcp-prune idle --json     # same, machine-readable (same envelope as `report --json`)
-mcp-prune config-show     # print resolved config
-mcp-prune uninstall       # remove the SessionStart hook
+mcp-prune report           # grouped usage report — active / idle / never called
+mcp-prune report --json    # same, machine-readable
+mcp-prune report --fresh   # bypass the 24h cache, rescan transcripts
+mcp-prune idle             # only idle servers (warn/alert/unused)
+mcp-prune idle --json      # same, same envelope as `report --json`
+mcp-prune apply            # interactive prune — prompts per idle server
+mcp-prune apply --dry-run  # print what would be removed without doing it
+mcp-prune apply -y         # auto-confirm; remove every removable idle server
+mcp-prune config-show      # print resolved config
 ```
 
 Sample:
 
 ```
-mcp-prune — scanned 1990 transcripts at 2026-05-21 11:38 UTC
-Thresholds: warn ≥7d  alert ≥14d
+mcp-prune  2019 transcripts · 2026-05-21 13:31 UTC
+warn ≥7d  ·  alert ≥14d
 
-server                                    7d     14d     30d    total    last (d)  status
-------------------------------------------------------------------------------------------------
-gcp-observability                         66      66     345      384           3  ok
-gsd-workflow                               0       0      94       94          14  ALERT
-grove                                     35      35      35       35           3  ok
-plugin_playwright_playwright               0       0      30      374          25  ALERT
-github                                     0       0       6        9          18  ALERT
-plugin_context7_context7                   2       2       2       15           0  ok
-bullmq                                     0       0       1       29          27  ALERT
-plugin_slack_slack                         0       0       0        0           —  UNUSED
-plugin_vercel_vercel                       0       0       0        0           —  UNUSED
-vexp                                       0       0       0        0           —  UNUSED
+  ●  active (3 servers)
+     gcp-observability         3d   384 calls   66 in 7d
+     grove                     3d    35 calls   35 in 7d
+     plugin_context7_context7  0d    15 calls    2 in 7d
+
+  ○  idle ≥14d (5)
+     gsd-workflow                  14d    94 calls   94 in 30d
+     plugin_playwright_playwright  25d   374 calls   30 in 30d
+     github                        18d     9 calls    6 in 30d
+     collectors-admin              15d     5 calls    5 in 30d
+     bullmq                        27d    29 calls    1 in 30d
+
+  ⌀  never called (16)
+     Claude_Preview            —   0 calls   —
+     ccd_session_mgmt          —   0 calls   —
+     plugin_slack_slack        —   0 calls   —
+     vexp                      —   0 calls   —
+     …
+
+  → 21 servers idle · run `mcp-prune apply` to review and remove
 ```
+
+Status markers: `●` active · `◐` warn · `○` alert · `⌀` never called. Color
+is auto-disabled when stdout isn't a terminal; set `NO_COLOR` to opt out
+explicitly or `FORCE_COLOR` to override.
+
+### Pruning
+
+`mcp-prune apply` walks each idle server in order and prompts for
+confirmation. On approval it shells out to `claude mcp remove <name>`. Plugin-
+defined servers (`plugin_*`) are flagged but not auto-removed — those need
+`claude plugin disable`, which has different scope semantics. `--dry-run`
+shows the plan without executing; `-y` skips prompts for everything that's
+safe to remove.
 
 ## How it classifies
 
