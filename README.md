@@ -15,11 +15,27 @@ ones have been idle long enough to disable.
 ## Install
 
 ```sh
-cargo install --path .
+npm install -g mcp-prune
+# or run without installing
+npx mcp-prune report
+
 mcp-prune install   # appends a SessionStart hook to ~/.claude/settings.json
 ```
 
-The installer creates a timestamped backup of `settings.json` before writing.
+The npm package downloads a prebuilt binary for your platform on install — no
+Rust toolchain required. Supported: `darwin-arm64`, `darwin-x64`, `linux-x64`,
+`linux-arm64`.
+
+The hook installer creates a timestamped backup of `settings.json` before
+writing.
+
+### From source
+
+```sh
+cargo install --git https://github.com/mstuart/mcp-prune
+# or, in a clone
+cargo install --path .
+```
 
 ## Usage
 

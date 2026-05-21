@@ -1,0 +1,4 @@
+# The native binary is downloaded at install time, not bundled.
+bin/mcp-prune-bin
+bin/mcp-prune-bin.exe
+*.log
