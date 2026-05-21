@@ -72,14 +72,24 @@ fn main() -> Result<()> {
         }
         Command::Idle { json } => {
             let report = cache::read_or_scan(&cfg)?;
-            let idle: Vec<_> = report
-                .servers
-                .iter()
-                .filter(|s| s.status != analyze::Status::Ok)
-                .collect();
             if json {
-                println!("{}", serde_json::to_string_pretty(&idle)?);
+                let idle_servers: Vec<analyze::ServerReport> = report
+                    .servers
+                    .iter()
+                    .filter(|s| s.status != analyze::Status::Ok)
+                    .cloned()
+                    .collect();
+                let idle_report = analyze::Report {
+                    servers: idle_servers,
+                    ..report
+                };
+                println!("{}", serde_json::to_string_pretty(&idle_report)?);
             } else {
+                let idle: Vec<&analyze::ServerReport> = report
+                    .servers
+                    .iter()
+                    .filter(|s| s.status != analyze::Status::Ok)
+                    .collect();
                 analyze::print_idle(&idle);
             }
         }

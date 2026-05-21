@@ -28,6 +28,7 @@ mcp-prune report          # full table — all servers, sorted by 30d calls
 mcp-prune report --json   # same, machine-readable
 mcp-prune report --fresh  # bypass the 24h cache, rescan transcripts
 mcp-prune idle            # only servers in warn/alert/unused state
+mcp-prune idle --json     # same, machine-readable (same envelope as `report --json`)
 mcp-prune config-show     # print resolved config
 mcp-prune uninstall       # remove the SessionStart hook
 ```
