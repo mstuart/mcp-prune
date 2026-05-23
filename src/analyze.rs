@@ -5,6 +5,7 @@ use crate::style;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,6 +33,11 @@ pub struct ServerReport {
     /// candidate: nonzero configuration cost, zero observed usage.
     #[serde(default = "default_true")]
     pub transcript_seen: bool,
+    /// Directory that owns the local/project-scope config entry for this
+    /// server. `claude mcp remove` only finds project-scope entries when run
+    /// from inside the owning directory; `apply` uses this as CWD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<PathBuf>,
 }
 
 fn default_true() -> bool {
@@ -106,6 +112,7 @@ pub fn build(scan: ScanResult, installed: &Installed, cfg: &Config) -> Result<Re
             let days_since_last = s.last_call.map(|t| (now - t).num_days());
             let status = classify(s.calls_total, days_since_last, cfg);
             let source = installed.classify(&s.server);
+            let project_dir = installed.project_dir(&s.server).map(|p| p.to_path_buf());
             ServerReport {
                 server: s.server,
                 status,
@@ -117,6 +124,7 @@ pub fn build(scan: ScanResult, installed: &Installed, cfg: &Config) -> Result<Re
                 last_call: s.last_call,
                 days_since_last,
                 transcript_seen: true,
+                project_dir,
             }
         })
         .collect();
@@ -141,6 +149,7 @@ pub fn build(scan: ScanResult, installed: &Installed, cfg: &Config) -> Result<Re
             last_call: None,
             days_since_last: None,
             transcript_seen: false,
+            project_dir: installed.project_dir(name).map(|p| p.to_path_buf()),
         })
         .collect();
     servers.append(&mut synthetic);
@@ -499,7 +508,8 @@ mod tests {
             i.user.insert((*s).into());
         }
         for s in project {
-            i.project.insert((*s).into());
+            i.project
+                .insert((*s).into(), PathBuf::from("/tmp/test-project"));
         }
         i
     }

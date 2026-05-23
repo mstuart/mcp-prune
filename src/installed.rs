@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Where an MCP server's configuration lives — determines whether `mcp-prune
@@ -24,7 +24,10 @@ pub enum ServerSource {
 #[derive(Debug, Default, Clone)]
 pub struct Installed {
     pub user: HashSet<String>,
-    pub project: HashSet<String>,
+    /// Project-scoped servers map to the directory whose `.mcp.json` or
+    /// `projects[<dir>].mcpServers` entry in `~/.claude.json` declares them.
+    /// `claude mcp remove` must run in that directory to find the entry.
+    pub project: HashMap<String, PathBuf>,
     pub enabled_plugins: HashSet<String>,
 }
 
@@ -40,18 +43,24 @@ impl Installed {
         }
         if self.user.contains(server) {
             ServerSource::UserConfig
-        } else if self.project.contains(server) {
+        } else if self.project.contains_key(server) {
             ServerSource::ProjectConfig
         } else {
             ServerSource::Historical
         }
     }
 
+    /// Directory whose config declared this project-scoped server, if any.
+    /// Used as the CWD for `claude mcp remove` so it can locate the entry.
+    pub fn project_dir(&self, server: &str) -> Option<&Path> {
+        self.project.get(server).map(PathBuf::as_path)
+    }
+
     /// All explicitly-named configured servers (user and project scope).
     /// Plugin-provided servers are excluded — their server names are defined
     /// by the plugin at load time, so we can't enumerate them from config.
     pub fn all_named(&self) -> impl Iterator<Item = &String> {
-        self.user.iter().chain(self.project.iter())
+        self.user.iter().chain(self.project.keys())
     }
 }
 
@@ -77,15 +86,20 @@ fn load_claude_json(path: &Path, out: &mut Installed) {
     }
     if let Some(projects) = v.get("projects").and_then(Value::as_object) {
         for (project_path, proj) in projects {
+            let dir = PathBuf::from(project_path);
             if let Some(servers) = proj.get("mcpServers").and_then(Value::as_object) {
-                out.project.extend(servers.keys().cloned());
+                for name in servers.keys() {
+                    out.project
+                        .entry(name.clone())
+                        .or_insert_with(|| dir.clone());
+                }
             }
-            load_project_mcp_json(&PathBuf::from(project_path).join(".mcp.json"), out);
+            load_project_mcp_json(&dir.join(".mcp.json"), out, &dir);
         }
     }
 }
 
-fn load_project_mcp_json(path: &Path, out: &mut Installed) {
+fn load_project_mcp_json(path: &Path, out: &mut Installed, dir: &Path) {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return;
     };
@@ -93,7 +107,11 @@ fn load_project_mcp_json(path: &Path, out: &mut Installed) {
         return;
     };
     if let Some(servers) = v.get("mcpServers").and_then(Value::as_object) {
-        out.project.extend(servers.keys().cloned());
+        for name in servers.keys() {
+            out.project
+                .entry(name.clone())
+                .or_insert_with(|| dir.to_path_buf());
+        }
     }
 }
 
@@ -124,8 +142,10 @@ mod tests {
         let mut i = Installed::default();
         i.user.insert("vexp".into());
         i.user.insert("gitnexus".into());
-        i.project.insert("gsd-workflow".into());
-        i.project.insert("github".into());
+        i.project
+            .insert("gsd-workflow".into(), PathBuf::from("/repo/a"));
+        i.project
+            .insert("github".into(), PathBuf::from("/repo/b"));
         i.enabled_plugins.insert("playwright".into());
         i.enabled_plugins.insert("claude-mem".into());
         i
@@ -165,6 +185,16 @@ mod tests {
             installed().classify("plugin_context7_context7"),
             ServerSource::Historical
         );
+    }
+
+    #[test]
+    fn project_dir_returned_for_project_scoped_server() {
+        let i = installed();
+        assert_eq!(i.project_dir("gsd-workflow"), Some(Path::new("/repo/a")));
+        assert_eq!(i.project_dir("github"), Some(Path::new("/repo/b")));
+        // User-scoped and unknown servers have no project dir.
+        assert_eq!(i.project_dir("vexp"), None);
+        assert_eq!(i.project_dir("nonexistent"), None);
     }
 
     #[test]

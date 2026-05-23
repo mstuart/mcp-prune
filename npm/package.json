@@ -1,6 +1,6 @@
 {
   "name": "mcp-prune",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Audit MCP server usage from Claude Code transcripts. Find idle servers to prune.",
   "keywords": ["mcp", "claude-code", "anthropic", "audit"],
   "homepage": "https://github.com/mstuart/mcp-prune#readme",

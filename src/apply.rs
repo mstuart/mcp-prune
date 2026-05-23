@@ -3,6 +3,7 @@ use crate::installed::ServerSource;
 use crate::style;
 use anyhow::{bail, Context, Result};
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 use std::process::Command;
 
 pub struct ApplyOpts {
@@ -77,14 +78,20 @@ pub fn run(report: &Report, opts: ApplyOpts) -> Result<()> {
         match action {
             Decision::Remove => {
                 if opts.dry_run {
+                    let where_clause = s
+                        .project_dir
+                        .as_ref()
+                        .map(|p| format!(" (in {})", p.display()))
+                        .unwrap_or_default();
                     println!(
-                        "     {}  would run: claude mcp remove {}",
+                        "     {}  would run: claude mcp remove {}{}",
                         style::dim("·"),
-                        s.server
+                        s.server,
+                        where_clause,
                     );
                     removed += 1;
                 } else {
-                    match run_remove(&s.server) {
+                    match run_remove(&s.server, s.project_dir.as_deref()) {
                         Ok(()) => {
                             println!(
                                 "     {}  removed {}",
@@ -214,13 +221,16 @@ fn first_plugin_segment(after_prefix: &str) -> &str {
     after_prefix.split('_').next().unwrap_or(after_prefix)
 }
 
-fn run_remove(name: &str) -> Result<()> {
-    let output = Command::new("claude")
-        .arg("mcp")
-        .arg("remove")
-        .arg(name)
-        .output()
-        .context("spawn `claude mcp remove`")?;
+fn run_remove(name: &str, project_dir: Option<&Path>) -> Result<()> {
+    let mut cmd = Command::new("claude");
+    cmd.arg("mcp").arg("remove").arg(name);
+    // Project-scope entries (`projects[<dir>].mcpServers` in ~/.claude.json,
+    // or a project's `.mcp.json`) are only visible to `claude mcp remove` when
+    // it runs in that directory. User-scope entries are visible from anywhere.
+    if let Some(dir) = project_dir {
+        cmd.current_dir(dir);
+    }
+    let output = cmd.output().context("spawn `claude mcp remove`")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
