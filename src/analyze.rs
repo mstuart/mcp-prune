@@ -153,8 +153,7 @@ pub fn build(scan: ScanResult, installed: &Installed, cfg: &Config) -> Result<Re
     // transcript. Prime prune candidates: configured cost, zero observed
     // usage. Plugin-provided server names are not enumerable from config, so
     // they are excluded from this synthesis.
-    let seen: std::collections::HashSet<&str> =
-        servers.iter().map(|s| s.server.as_str()).collect();
+    let seen: std::collections::HashSet<&str> = servers.iter().map(|s| s.server.as_str()).collect();
     let mut synthetic: Vec<ServerReport> = installed
         .all_named()
         .filter(|name| !seen.contains(name.as_str()))
@@ -546,7 +545,10 @@ mod tests {
         assert!(names.contains(&"statsig"));
 
         for s in &report.servers {
-            assert!(!s.transcript_seen, "synthesized entries are not transcript-seen");
+            assert!(
+                !s.transcript_seen,
+                "synthesized entries are not transcript-seen"
+            );
             assert_eq!(s.status, Status::Unused);
             assert_eq!(s.calls_total, 0);
             assert!(s.last_call.is_none());
@@ -570,7 +572,10 @@ mod tests {
         assert_eq!(report.servers.len(), 1);
         let vexp = &report.servers[0];
         assert_eq!(vexp.server, "vexp");
-        assert!(vexp.transcript_seen, "scan-derived entries are transcript-seen");
+        assert!(
+            vexp.transcript_seen,
+            "scan-derived entries are transcript-seen"
+        );
         assert_eq!(vexp.calls_total, 5);
     }
 
@@ -579,10 +584,18 @@ mod tests {
         let installed = installed_with(&["user-only"], &["project-only"]);
         let report = build(empty_scan(), &installed, &cfg()).unwrap();
 
-        let user = report.servers.iter().find(|s| s.server == "user-only").unwrap();
+        let user = report
+            .servers
+            .iter()
+            .find(|s| s.server == "user-only")
+            .unwrap();
         assert_eq!(user.source, ServerSource::UserConfig);
 
-        let proj = report.servers.iter().find(|s| s.server == "project-only").unwrap();
+        let proj = report
+            .servers
+            .iter()
+            .find(|s| s.server == "project-only")
+            .unwrap();
         assert_eq!(proj.source, ServerSource::ProjectConfig);
     }
 
@@ -623,14 +636,22 @@ mod tests {
         );
         let before = installed_with(&[], &["github"]);
         let mut report = build(scan, &before, &cfg()).unwrap();
-        let github = report.servers.iter().find(|s| s.server == "github").unwrap();
+        let github = report
+            .servers
+            .iter()
+            .find(|s| s.server == "github")
+            .unwrap();
         assert_eq!(github.source, ServerSource::ProjectConfig);
         assert!(github.project_dir.is_some());
 
         let after = installed_with(&[], &[]);
         refresh_classification(&mut report, &after);
 
-        let github = report.servers.iter().find(|s| s.server == "github").unwrap();
+        let github = report
+            .servers
+            .iter()
+            .find(|s| s.server == "github")
+            .unwrap();
         assert_eq!(github.source, ServerSource::Historical);
         assert!(github.project_dir.is_none());
     }

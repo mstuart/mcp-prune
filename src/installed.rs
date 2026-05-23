@@ -144,8 +144,7 @@ mod tests {
         i.user.insert("gitnexus".into());
         i.project
             .insert("gsd-workflow".into(), PathBuf::from("/repo/a"));
-        i.project
-            .insert("github".into(), PathBuf::from("/repo/b"));
+        i.project.insert("github".into(), PathBuf::from("/repo/b"));
         i.enabled_plugins.insert("playwright".into());
         i.enabled_plugins.insert("claude-mem".into());
         i
