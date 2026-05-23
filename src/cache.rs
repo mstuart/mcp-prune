@@ -1,5 +1,6 @@
 use crate::analyze::{self, Report};
 use crate::config::Config;
+use crate::installed;
 use crate::scan;
 use anyhow::{Context, Result};
 use std::fs;
@@ -37,7 +38,8 @@ pub fn read_or_scan(cfg: &Config) -> Result<Report> {
         }
     }
     let stats = scan::scan_all(cfg)?;
-    let report = analyze::build(stats, cfg)?;
+    let inst = installed::load();
+    let report = analyze::build(stats, &inst, cfg)?;
     write(cfg, &report)?;
     Ok(report)
 }

@@ -1,4 +1,5 @@
 use crate::analyze::{Report, ServerReport, Status};
+use crate::installed::ServerSource;
 use crate::style;
 use anyhow::{bail, Context, Result};
 use std::io::{self, BufRead, Write};
@@ -27,35 +28,50 @@ pub fn run(report: &Report, opts: ApplyOpts) -> Result<()> {
         return Ok(());
     }
 
+    let actionable = idle
+        .iter()
+        .filter(|s| !matches!(s.source, ServerSource::Historical))
+        .count();
+    let stale = idle.len() - actionable;
     println!();
-    println!(
-        "  {}  {}",
-        style::cyan("apply"),
-        style::dim(&format!(
-            "{} idle server{} · {}",
-            idle.len(),
-            if idle.len() == 1 { "" } else { "s" },
-            if opts.dry_run {
-                "dry-run (nothing will be removed)"
-            } else if opts.assume_yes {
-                "auto-confirm enabled"
-            } else {
-                "prompting per server"
-            }
-        ))
+    let mode = if opts.dry_run {
+        "dry-run (nothing will be removed)"
+    } else if opts.assume_yes {
+        "auto-confirm enabled"
+    } else {
+        "prompting per server"
+    };
+    let mut header = format!(
+        "{} idle server{} · {}",
+        actionable,
+        if actionable == 1 { "" } else { "s" },
+        mode
     );
+    if stale > 0 {
+        header.push_str(&format!(" · {} stale skipped", stale));
+    }
+    println!("  {}  {}", style::cyan("apply"), style::dim(&header));
     println!();
 
     let mut stdin = io::BufReader::new(io::stdin());
     let mut removed = 0;
     let mut skipped = 0;
     let mut plugin_skipped = 0;
+    let mut historical_skipped = 0;
 
     for s in &idle {
-        if s.server.starts_with("plugin_") {
-            print_plugin_hint(s);
-            plugin_skipped += 1;
-            continue;
+        match s.source {
+            ServerSource::Plugin => {
+                print_plugin_hint(s);
+                plugin_skipped += 1;
+                continue;
+            }
+            ServerSource::Historical => {
+                print_historical_hint(s);
+                historical_skipped += 1;
+                continue;
+            }
+            ServerSource::UserConfig | ServerSource::ProjectConfig => {}
         }
         let action = decide(s, &opts, &mut stdin)?;
         match action {
@@ -101,7 +117,13 @@ pub fn run(report: &Report, opts: ApplyOpts) -> Result<()> {
         println!();
     }
 
-    print_summary(removed, skipped, plugin_skipped, opts.dry_run);
+    print_summary(
+        removed,
+        skipped,
+        plugin_skipped,
+        historical_skipped,
+        opts.dry_run,
+    );
     Ok(())
 }
 
@@ -188,6 +210,20 @@ fn print_plugin_hint(s: &ServerReport) {
     println!();
 }
 
+fn print_historical_hint(s: &ServerReport) {
+    println!(
+        "  {}  {}  {}",
+        style::dim("stale"),
+        style::dim(&s.server),
+        style::dim("not currently configured")
+    );
+    println!(
+        "     {}  appears only in past transcripts — already removed from MCP config, nothing to do",
+        style::dim("hint"),
+    );
+    println!();
+}
+
 fn first_plugin_segment(after_prefix: &str) -> &str {
     after_prefix.split('_').next().unwrap_or(after_prefix)
 }
@@ -210,7 +246,13 @@ fn run_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn print_summary(removed: usize, skipped: usize, plugin_skipped: usize, dry_run: bool) {
+fn print_summary(
+    removed: usize,
+    skipped: usize,
+    plugin_skipped: usize,
+    historical_skipped: usize,
+    dry_run: bool,
+) {
     let verb = if dry_run { "would remove" } else { "removed" };
     let mut parts = vec![format!("{} {}", verb, removed)];
     if skipped > 0 {
@@ -218,6 +260,9 @@ fn print_summary(removed: usize, skipped: usize, plugin_skipped: usize, dry_run:
     }
     if plugin_skipped > 0 {
         parts.push(format!("plugins ignored {}", plugin_skipped));
+    }
+    if historical_skipped > 0 {
+        parts.push(format!("stale ignored {}", historical_skipped));
     }
     println!(
         "  {}  {}",

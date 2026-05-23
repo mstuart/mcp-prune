@@ -6,6 +6,7 @@ mod apply;
 mod cache;
 mod config;
 mod hook;
+mod installed;
 mod scan;
 mod style;
 
@@ -69,7 +70,8 @@ fn main() -> Result<()> {
         Command::Report { json, fresh } => {
             let report = if fresh {
                 let stats = scan::scan_all(&cfg)?;
-                let report = analyze::build(stats, &cfg)?;
+                let inst = installed::load();
+                let report = analyze::build(stats, &inst, &cfg)?;
                 cache::write(&cfg, &report)?;
                 report
             } else {

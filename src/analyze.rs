@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::installed::{Installed, ServerSource};
 use crate::scan::ScanResult;
 use crate::style;
 use anyhow::Result;
@@ -18,6 +19,8 @@ pub enum Status {
 pub struct ServerReport {
     pub server: String,
     pub status: Status,
+    #[serde(default)]
+    pub source: ServerSource,
     pub calls_total: u64,
     pub calls_30d: u64,
     pub calls_14d: u64,
@@ -35,7 +38,7 @@ pub struct Report {
     pub servers: Vec<ServerReport>,
 }
 
-pub fn build(scan: ScanResult, cfg: &Config) -> Result<Report> {
+pub fn build(scan: ScanResult, installed: &Installed, cfg: &Config) -> Result<Report> {
     let now = scan.scanned_at;
     let mut servers: Vec<ServerReport> = scan
         .servers
@@ -43,9 +46,11 @@ pub fn build(scan: ScanResult, cfg: &Config) -> Result<Report> {
         .map(|s| {
             let days_since_last = s.last_call.map(|t| (now - t).num_days());
             let status = classify(s.calls_total, days_since_last, cfg);
+            let source = installed.classify(&s.server);
             ServerReport {
                 server: s.server,
                 status,
+                source,
                 calls_total: s.calls_total,
                 calls_30d: s.calls_30d,
                 calls_14d: s.calls_14d,
@@ -168,54 +173,98 @@ fn print_rows(rows: &[&ServerReport]) {
         .unwrap_or(10)
         .max(20);
     for s in rows {
+        let historical = s.source == ServerSource::Historical;
         let last = s
             .days_since_last
             .map(|d| format!("{}d", d.max(0)))
             .unwrap_or_else(|| "—".to_string());
-        let last_painted = match s.status {
-            Status::Ok => style::dim(&last),
-            Status::Warn => style::amber(&last),
-            Status::Alert => style::red(&last),
-            Status::Unused => style::dim(&last),
+        let last_painted = if historical {
+            style::dim(&last)
+        } else {
+            match s.status {
+                Status::Ok => style::dim(&last),
+                Status::Warn => style::amber(&last),
+                Status::Alert => style::red(&last),
+                Status::Unused => style::dim(&last),
+            }
         };
-        let total = if s.calls_total == 0 {
-            style::dim("0 calls")
+        let total_text = if s.calls_total == 0 {
+            "0 calls".to_string()
         } else {
             format!("{} calls", s.calls_total)
         };
-        let recent = if s.calls_7d > 0 {
+        let total = if historical || s.calls_total == 0 {
+            style::dim(&total_text)
+        } else {
+            total_text
+        };
+        let recent = if historical {
+            style::dim("—")
+        } else if s.calls_7d > 0 {
             format!("{} in 7d", s.calls_7d)
         } else if s.calls_30d > 0 {
             style::dim(&format!("{} in 30d", s.calls_30d))
         } else {
             style::dim("—")
         };
+        let name = if historical {
+            style::dim(&s.server)
+        } else {
+            s.server.clone()
+        };
+        let tag = source_tag(s.source);
+        let pad = name_w.saturating_sub(s.server.len());
         println!(
-            "     {:<width$}  {:>5}   {:<10}  {}",
-            s.server,
+            "     {}{}  {:>5}   {:<10}  {}{}",
+            name,
+            " ".repeat(pad),
             last_painted,
             total,
             recent,
-            width = name_w
+            tag,
         );
     }
 }
 
+fn source_tag(source: ServerSource) -> String {
+    match source {
+        ServerSource::UserConfig => String::new(),
+        ServerSource::ProjectConfig => format!("  {}", style::dim("[project]")),
+        ServerSource::Plugin => format!("  {}", style::violet("[plugin]")),
+        ServerSource::Historical => format!("  {}", style::dim("[stale]")),
+    }
+}
+
 fn print_footer(report: &Report) {
-    let idle_count = report
+    let actionable_idle = report
         .servers
         .iter()
-        .filter(|s| s.status != Status::Ok)
+        .filter(|s| s.status != Status::Ok && s.source != ServerSource::Historical)
         .count();
-    if idle_count == 0 {
+    let stale_count = report
+        .servers
+        .iter()
+        .filter(|s| s.source == ServerSource::Historical)
+        .count();
+    if actionable_idle == 0 {
         println!("  {}", style::dim("→ no idle servers · nothing to prune"));
     } else {
         let msg = format!(
             "→ {} server{} idle · run `mcp-prune apply` to review and remove",
-            idle_count,
-            if idle_count == 1 { "" } else { "s" }
+            actionable_idle,
+            if actionable_idle == 1 { "" } else { "s" }
         );
         println!("  {}", style::cyan(&msg));
+    }
+    if stale_count > 0 {
+        println!(
+            "  {}",
+            style::dim(&format!(
+                "  ({} stale entr{} from past transcripts — not currently configured)",
+                stale_count,
+                if stale_count == 1 { "y" } else { "ies" }
+            ))
+        );
     }
 }
 
@@ -258,11 +307,26 @@ pub fn print_idle(idle: &[&ServerReport]) {
         print_rows(&rows);
     }
     println!();
+    let actionable = idle
+        .iter()
+        .filter(|s| s.source != ServerSource::Historical)
+        .count();
+    let stale = idle.len() - actionable;
     let msg = format!(
         "→ {} idle · run `mcp-prune apply` to review and remove",
-        idle.len()
+        actionable
     );
     println!("  {}", style::cyan(&msg));
+    if stale > 0 {
+        println!(
+            "  {}",
+            style::dim(&format!(
+                "  ({} stale entr{} from past transcripts — not currently configured)",
+                stale,
+                if stale == 1 { "y" } else { "ies" }
+            ))
+        );
+    }
     println!();
 }
 
