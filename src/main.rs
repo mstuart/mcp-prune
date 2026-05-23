@@ -32,12 +32,19 @@ enum Command {
         json: bool,
         #[arg(long, help = "Force a fresh scan, ignoring cache")]
         fresh: bool,
+        #[arg(
+            long,
+            help = "Include stale entries (servers in transcripts but no longer configured)"
+        )]
+        all: bool,
     },
 
     #[command(about = "Show only idle servers (warn/alert)")]
     Idle {
         #[arg(long, help = "Output JSON")]
         json: bool,
+        #[arg(long, help = "Include stale entries")]
+        all: bool,
     },
 
     #[command(about = "Review idle servers and remove them via `claude mcp remove`")]
@@ -67,7 +74,7 @@ fn main() -> Result<()> {
     let cfg = config::load(cli.config.as_deref())?;
 
     match cli.command {
-        Command::Report { json, fresh } => {
+        Command::Report { json, fresh, all } => {
             let report = if fresh {
                 let stats = scan::scan_all(&cfg)?;
                 let inst = installed::load();
@@ -77,33 +84,20 @@ fn main() -> Result<()> {
             } else {
                 cache::read_or_scan(&cfg)?
             };
+            let view = analyze::view(&report, all);
             if json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
+                println!("{}", serde_json::to_string_pretty(&view)?);
             } else {
-                analyze::print_table(&report);
+                analyze::print_table(&view);
             }
         }
-        Command::Idle { json } => {
+        Command::Idle { json, all } => {
             let report = cache::read_or_scan(&cfg)?;
+            let view = analyze::idle_view(&report, all);
             if json {
-                let idle_servers: Vec<analyze::ServerReport> = report
-                    .servers
-                    .iter()
-                    .filter(|s| s.status != analyze::Status::Ok)
-                    .cloned()
-                    .collect();
-                let idle_report = analyze::Report {
-                    servers: idle_servers,
-                    ..report
-                };
-                println!("{}", serde_json::to_string_pretty(&idle_report)?);
+                println!("{}", serde_json::to_string_pretty(&view)?);
             } else {
-                let idle: Vec<&analyze::ServerReport> = report
-                    .servers
-                    .iter()
-                    .filter(|s| s.status != analyze::Status::Ok)
-                    .collect();
-                analyze::print_idle(&idle);
+                analyze::print_idle_view(&view);
             }
         }
         Command::Apply {

@@ -38,6 +38,56 @@ pub struct Report {
     pub servers: Vec<ServerReport>,
 }
 
+/// A presentable slice of a `Report`. `report.servers` is the filtered list
+/// (e.g., excluding stale entries when the user didn't pass `--all`);
+/// `stale_hidden` records how many were filtered so the footer can mention
+/// them without showing the rows.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReportView {
+    #[serde(flatten)]
+    pub report: Report,
+    pub stale_hidden: usize,
+}
+
+pub fn view(report: &Report, include_stale: bool) -> ReportView {
+    let total = report.servers.len();
+    let servers: Vec<ServerReport> = report
+        .servers
+        .iter()
+        .filter(|s| include_stale || s.source != ServerSource::Historical)
+        .cloned()
+        .collect();
+    let stale_hidden = total - servers.len();
+    let mut filtered = report.clone();
+    filtered.servers = servers;
+    ReportView {
+        report: filtered,
+        stale_hidden,
+    }
+}
+
+pub fn idle_view(report: &Report, include_stale: bool) -> ReportView {
+    let total_idle = report
+        .servers
+        .iter()
+        .filter(|s| s.status != Status::Ok)
+        .count();
+    let servers: Vec<ServerReport> = report
+        .servers
+        .iter()
+        .filter(|s| s.status != Status::Ok)
+        .filter(|s| include_stale || s.source != ServerSource::Historical)
+        .cloned()
+        .collect();
+    let stale_hidden = total_idle - servers.len();
+    let mut filtered = report.clone();
+    filtered.servers = servers;
+    ReportView {
+        report: filtered,
+        stale_hidden,
+    }
+}
+
 pub fn build(scan: ScanResult, installed: &Installed, cfg: &Config) -> Result<Report> {
     let now = scan.scanned_at;
     let mut servers: Vec<ServerReport> = scan
@@ -139,7 +189,8 @@ pub fn print_header(report: &Report) {
     println!();
 }
 
-pub fn print_table(report: &Report) {
+pub fn print_table(view: &ReportView) {
+    let report = &view.report;
     print_header(report);
 
     let groups = [Status::Ok, Status::Warn, Status::Alert, Status::Unused];
@@ -162,7 +213,7 @@ pub fn print_table(report: &Report) {
         print_rows(&rows);
     }
     println!();
-    print_footer(report);
+    print_footer(view);
 }
 
 fn print_rows(rows: &[&ServerReport]) {
@@ -235,16 +286,12 @@ fn source_tag(source: ServerSource) -> String {
     }
 }
 
-fn print_footer(report: &Report) {
-    let actionable_idle = report
+fn print_footer(view: &ReportView) {
+    let actionable_idle = view
+        .report
         .servers
         .iter()
         .filter(|s| s.status != Status::Ok && s.source != ServerSource::Historical)
-        .count();
-    let stale_count = report
-        .servers
-        .iter()
-        .filter(|s| s.source == ServerSource::Historical)
         .count();
     if actionable_idle == 0 {
         println!("  {}", style::dim("→ no idle servers · nothing to prune"));
@@ -256,20 +303,21 @@ fn print_footer(report: &Report) {
         );
         println!("  {}", style::cyan(&msg));
     }
-    if stale_count > 0 {
+    if view.stale_hidden > 0 {
         println!(
             "  {}",
             style::dim(&format!(
-                "  ({} stale entr{} from past transcripts — not currently configured)",
-                stale_count,
-                if stale_count == 1 { "y" } else { "ies" }
+                "  ({} stale entr{} hidden — pass --all to show)",
+                view.stale_hidden,
+                if view.stale_hidden == 1 { "y" } else { "ies" }
             ))
         );
     }
 }
 
-pub fn print_idle(idle: &[&ServerReport]) {
-    if idle.is_empty() {
+pub fn print_idle_view(view: &ReportView) {
+    let idle: Vec<&ServerReport> = view.report.servers.iter().collect();
+    if idle.is_empty() && view.stale_hidden == 0 {
         println!();
         println!(
             "  {}  {}",
@@ -311,19 +359,22 @@ pub fn print_idle(idle: &[&ServerReport]) {
         .iter()
         .filter(|s| s.source != ServerSource::Historical)
         .count();
-    let stale = idle.len() - actionable;
-    let msg = format!(
-        "→ {} idle · run `mcp-prune apply` to review and remove",
-        actionable
-    );
-    println!("  {}", style::cyan(&msg));
-    if stale > 0 {
+    if actionable == 0 {
+        println!("  {}", style::dim("→ no actionable idle servers"));
+    } else {
+        let msg = format!(
+            "→ {} idle · run `mcp-prune apply` to review and remove",
+            actionable
+        );
+        println!("  {}", style::cyan(&msg));
+    }
+    if view.stale_hidden > 0 {
         println!(
             "  {}",
             style::dim(&format!(
-                "  ({} stale entr{} from past transcripts — not currently configured)",
-                stale,
-                if stale == 1 { "y" } else { "ies" }
+                "  ({} stale entr{} hidden — pass --all to show)",
+                view.stale_hidden,
+                if view.stale_hidden == 1 { "y" } else { "ies" }
             ))
         );
     }

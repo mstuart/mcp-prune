@@ -67,7 +67,7 @@ pub fn run(report: &Report, opts: ApplyOpts) -> Result<()> {
                 continue;
             }
             ServerSource::Historical => {
-                print_historical_hint(s);
+                // Silently skip — nothing to remove. Reported in summary.
                 historical_skipped += 1;
                 continue;
             }
@@ -206,20 +206,6 @@ fn print_plugin_hint(s: &ServerReport) {
         "     {}  this is a plugin-defined server; use `claude plugin disable {}`",
         style::dim("hint"),
         first_plugin_segment(plugin_name)
-    );
-    println!();
-}
-
-fn print_historical_hint(s: &ServerReport) {
-    println!(
-        "  {}  {}  {}",
-        style::dim("stale"),
-        style::dim(&s.server),
-        style::dim("not currently configured")
-    );
-    println!(
-        "     {}  appears only in past transcripts — already removed from MCP config, nothing to do",
-        style::dim("hint"),
     );
     println!();
 }
