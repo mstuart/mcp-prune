@@ -7,10 +7,11 @@ Audit MCP server usage from Claude Code transcripts. Find idle servers so you
 can prune them and stop loading their tool schemas into every conversation.
 
 Every MCP server you keep configured but don't actually use is dead weight —
-its tool definitions ship into your context on every session, even with
-`ENABLE_TOOL_SEARCH=true`. `mcp-prune` parses `~/.claude/projects/**/*.jsonl`
-in parallel, counts real `tool_use` events per server, and tells you which
-ones have been idle long enough to disable.
+its tool definitions ship into your context on every session, costing tokens
+and crowding the model's tool-selection space whether you ever call the
+server or not. `mcp-prune` parses `~/.claude/projects/**/*.jsonl` in parallel,
+counts real `tool_use` events per server, and tells you which ones have been
+idle long enough to disable.
 
 ## Install
 
@@ -43,41 +44,47 @@ cargo install --path .
 mcp-prune report           # grouped usage report — active / idle / never called
 mcp-prune report --json    # same, machine-readable
 mcp-prune report --fresh   # bypass the 24h cache, rescan transcripts
+mcp-prune report --all     # include historical entries (in transcripts, not configured)
 mcp-prune idle             # only idle servers (warn/alert/unused)
 mcp-prune idle --json      # same, same envelope as `report --json`
 mcp-prune apply            # interactive prune — prompts per idle server
 mcp-prune apply --dry-run  # print what would be removed without doing it
 mcp-prune apply -y         # auto-confirm; remove every removable idle server
+mcp-prune install          # add the SessionStart hook to ~/.claude/settings.json
+mcp-prune uninstall        # remove the SessionStart hook
 mcp-prune config-show      # print resolved config
 ```
 
 Sample:
 
 ```
-mcp-prune  2019 transcripts · 2026-05-21 13:31 UTC
+mcp-prune  2107 transcripts · 2026-05-23 03:16 UTC
 warn ≥7d  ·  alert ≥14d
 
   ●  active (3 servers)
-     gcp-observability         3d   384 calls   66 in 7d
-     grove                     3d    35 calls   35 in 7d
-     plugin_context7_context7  0d    15 calls    2 in 7d
+     gcp-observability             5d   384 calls   66 in 7d  [project]
+     plugin_claude-mem_mcp-search  0d     6 calls    6 in 7d  [plugin]
+     vexp                          0d     4 calls    4 in 7d
 
-  ○  idle ≥14d (5)
-     gsd-workflow                  14d    94 calls   94 in 30d
-     plugin_playwright_playwright  25d   374 calls   30 in 30d
-     github                        18d     9 calls    6 in 30d
-     collectors-admin              15d     5 calls    5 in 30d
-     bullmq                        27d    29 calls    1 in 30d
+  ○  idle ≥14d (4)
+     gsd-workflow                  15d    94 calls   94 in 30d  [project]
+     plugin_playwright_playwright  27d   374 calls   30 in 30d  [plugin]
+     collectors-admin              17d     5 calls    5 in 30d  [project]
+     bullmq                        28d    29 calls    1 in 30d  [project]
 
-  ⌀  never called (16)
-     Claude_Preview            —   0 calls   —
-     ccd_session_mgmt          —   0 calls   —
-     plugin_slack_slack        —   0 calls   —
-     vexp                      —   0 calls   —
-     …
+  ⌀  never called (3)
+     atlassian                     —   0 calls   —  [project]
+     statsig                       —   0 calls   —  [project]
+     gitnexus                      —   0 calls   —  [project]
 
-  → 21 servers idle · run `mcp-prune apply` to review and remove
+  → 4 servers idle · run `mcp-prune apply` to review and remove
+    (19 stale entries hidden — pass --all to show)
 ```
+
+Tags after each row show where the server is configured: `[project]` for a
+per-directory entry in `~/.claude.json` or a `.mcp.json`, `[plugin]` for a
+server provided by an installed plugin, no tag for a user-scope entry at
+`~/.claude.json` root.
 
 Status markers: `●` active · `◐` warn · `○` alert · `⌀` never called. Color
 is auto-disabled when stdout isn't a terminal; set `NO_COLOR` to opt out
@@ -86,20 +93,27 @@ explicitly or `FORCE_COLOR` to override.
 ### Pruning
 
 `mcp-prune apply` walks each idle server in order and prompts for
-confirmation. On approval it shells out to `claude mcp remove <name>`. Plugin-
+confirmation. On approval it shells out to `claude mcp remove <name>`.
+
+MCP servers can be configured at user scope (`~/.claude.json` root), local
+scope (per-directory entries inside `~/.claude.json`), or shared-project scope
+(a committed `.mcp.json` in a project root). `claude mcp remove` only finds
+local-scope entries when invoked from inside the owning directory, so `apply`
+tracks the project dir per server and `cd`s into it before invoking. Plugin-
 defined servers (`plugin_*`) are flagged but not auto-removed — those need
-`claude plugin disable`, which has different scope semantics. `--dry-run`
-shows the plan without executing; `-y` skips prompts for everything that's
-safe to remove.
+`claude plugin disable`, which has different scope semantics.
+
+`--dry-run` shows the plan without executing; `-y` skips prompts for
+everything that's safe to remove.
 
 ## How it classifies
 
-| Status   | Meaning                                                                |
-|----------|------------------------------------------------------------------------|
-| `ok`     | Called within `warn_days` (default: 7)                                 |
-| `WARN`   | Idle ≥ `warn_days` but < `alert_days`                                  |
-| `ALERT`  | Idle ≥ `alert_days` (default: 14) — strong candidate to disable        |
-| `UNUSED` | Server appears in transcript metadata but has zero `tool_use` events   |
+| Report group   | Status   | Meaning                                                              |
+|----------------|----------|----------------------------------------------------------------------|
+| `active`       | `ok`     | Called within `warn_days` (default: 7)                               |
+| `warn ≥Xd`     | `WARN`   | Idle ≥ `warn_days` but < `alert_days`                                |
+| `idle ≥Xd`     | `ALERT`  | Idle ≥ `alert_days` (default: 14) — strong candidate to disable      |
+| `never called` | `UNUSED` | Server is configured but has zero `tool_use` events in transcripts   |
 
 `UNUSED` typically means the server's tools were loaded into context but never
 chosen — the worst kind of dead weight.
