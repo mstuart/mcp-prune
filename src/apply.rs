@@ -1,4 +1,5 @@
 use crate::analyze::{Report, ServerReport, Status};
+use crate::config::Config;
 use crate::installed::ServerSource;
 use crate::style;
 use anyhow::{bail, Context, Result};
@@ -11,7 +12,7 @@ pub struct ApplyOpts {
     pub assume_yes: bool,
 }
 
-pub fn run(report: &Report, opts: ApplyOpts) -> Result<()> {
+pub fn run(cfg: &Config, report: &Report, opts: ApplyOpts) -> Result<()> {
     let idle: Vec<&ServerReport> = report
         .servers
         .iter()
@@ -52,6 +53,13 @@ pub fn run(report: &Report, opts: ApplyOpts) -> Result<()> {
         header.push_str(&format!(" · {} stale skipped", stale));
     }
     println!("  {}  {}", style::cyan("apply"), style::dim(&header));
+    if !opts.dry_run && !opts.assume_yes {
+        println!(
+            "  {}  {}",
+            style::dim(" keys"),
+            style::dim("y = remove · n = skip (default) · q = quit"),
+        );
+    }
     println!();
 
     let mut stdin = io::BufReader::new(io::stdin());
@@ -118,6 +126,7 @@ pub fn run(report: &Report, opts: ApplyOpts) -> Result<()> {
                 println!();
                 println!("  {}", style::dim("aborted"));
                 println!();
+                invalidate_cache_if_changed(cfg, removed, opts.dry_run);
                 return Ok(());
             }
         }
@@ -131,7 +140,19 @@ pub fn run(report: &Report, opts: ApplyOpts) -> Result<()> {
         historical_skipped,
         opts.dry_run,
     );
+    invalidate_cache_if_changed(cfg, removed, opts.dry_run);
     Ok(())
+}
+
+/// Bust the cached report after a successful removal so the next `report` /
+/// `idle` invocation rescans the world instead of showing the now-deleted
+/// server. `read_or_scan` will fall through to a fresh scan when the file is
+/// missing.
+fn invalidate_cache_if_changed(cfg: &Config, removed: usize, dry_run: bool) {
+    if dry_run || removed == 0 {
+        return;
+    }
+    let _ = std::fs::remove_file(&cfg.cache_path);
 }
 
 enum Decision {
@@ -166,7 +187,7 @@ fn decide(
             "q" | "quit" => return Ok(Decision::Abort),
             other => {
                 println!(
-                    "     {} unknown response {:?}; expected y, n, or q",
+                    "     {} unknown response {:?}; expected y (remove), n (skip), or q (quit)",
                     style::red("·"),
                     other
                 );

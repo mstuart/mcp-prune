@@ -106,6 +106,7 @@ fn main() -> Result<()> {
         } => {
             let report = cache::read_or_scan(&cfg)?;
             apply::run(
+                &cfg,
                 &report,
                 apply::ApplyOpts {
                     dry_run,
