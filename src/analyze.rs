@@ -64,6 +64,26 @@ pub struct ReportView {
     pub stale_hidden: usize,
 }
 
+/// Re-derive each server's `source` and `project_dir` from the live
+/// `installed` snapshot, in place. Used after reading the cached report so
+/// classifications can't lie about state that changed since the cache was
+/// written (e.g. a server removed via `claude mcp remove` between commands).
+///
+/// Synthetic entries (`transcript_seen == false`) only exist because the
+/// server was configured at scan time. If that configuration is gone, the
+/// entry has no reason to remain and is dropped.
+pub fn refresh_classification(report: &mut Report, installed: &Installed) {
+    report.servers.retain_mut(|s| {
+        let source = installed.classify(&s.server);
+        if !s.transcript_seen && source == ServerSource::Historical {
+            return false;
+        }
+        s.source = source;
+        s.project_dir = installed.project_dir(&s.server).map(|p| p.to_path_buf());
+        true
+    });
+}
+
 pub fn view(report: &Report, include_stale: bool) -> ReportView {
     let total = report.servers.len();
     let servers: Vec<ServerReport> = report
@@ -564,5 +584,76 @@ mod tests {
 
         let proj = report.servers.iter().find(|s| s.server == "project-only").unwrap();
         assert_eq!(proj.source, ServerSource::ProjectConfig);
+    }
+
+    #[test]
+    fn refresh_drops_synthetic_entry_when_config_gone() {
+        let before = installed_with(&[], &["figma-remote-mcp"]);
+        let mut report = build(empty_scan(), &before, &cfg()).unwrap();
+        assert!(report
+            .servers
+            .iter()
+            .any(|s| s.server == "figma-remote-mcp"));
+
+        // User removed figma-remote-mcp via `claude mcp remove` between runs.
+        let after = installed_with(&[], &[]);
+        refresh_classification(&mut report, &after);
+
+        assert!(
+            !report
+                .servers
+                .iter()
+                .any(|s| s.server == "figma-remote-mcp"),
+            "synthetic entry should drop when its config is gone"
+        );
+    }
+
+    #[test]
+    fn refresh_demotes_transcript_seen_to_historical() {
+        // A server seen in transcripts AND configured. Its config goes away.
+        // Entry stays (still in transcripts) but source becomes Historical.
+        let mut scan = empty_scan();
+        scan.servers.insert(
+            "github".into(),
+            ServerStats {
+                server: "github".into(),
+                calls_total: 5,
+                ..Default::default()
+            },
+        );
+        let before = installed_with(&[], &["github"]);
+        let mut report = build(scan, &before, &cfg()).unwrap();
+        let github = report.servers.iter().find(|s| s.server == "github").unwrap();
+        assert_eq!(github.source, ServerSource::ProjectConfig);
+        assert!(github.project_dir.is_some());
+
+        let after = installed_with(&[], &[]);
+        refresh_classification(&mut report, &after);
+
+        let github = report.servers.iter().find(|s| s.server == "github").unwrap();
+        assert_eq!(github.source, ServerSource::Historical);
+        assert!(github.project_dir.is_none());
+    }
+
+    #[test]
+    fn refresh_picks_up_newly_added_configuration() {
+        // Server was historical (in transcripts, not configured). User
+        // reconfigures it. Next refresh promotes it back to UserConfig.
+        let mut scan = empty_scan();
+        scan.servers.insert(
+            "vexp".into(),
+            ServerStats {
+                server: "vexp".into(),
+                calls_total: 1,
+                ..Default::default()
+            },
+        );
+        let before = installed_with(&[], &[]);
+        let mut report = build(scan, &before, &cfg()).unwrap();
+        assert_eq!(report.servers[0].source, ServerSource::Historical);
+
+        let after = installed_with(&["vexp"], &[]);
+        refresh_classification(&mut report, &after);
+        assert_eq!(report.servers[0].source, ServerSource::UserConfig);
     }
 }

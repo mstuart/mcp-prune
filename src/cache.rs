@@ -32,8 +32,14 @@ pub fn read(cfg: &Config) -> Result<Option<Report>> {
 }
 
 pub fn read_or_scan(cfg: &Config) -> Result<Report> {
-    if let Some(report) = read(cfg)? {
+    if let Some(mut report) = read(cfg)? {
         if !is_stale(cfg)? {
+            // Transcript stats are cache-worthy (rescanning is expensive),
+            // but classifications can drift any time the user touches
+            // `claude mcp`. Re-derive them from the live config so we never
+            // act on phantom servers from a previous cache write.
+            let inst = installed::load();
+            analyze::refresh_classification(&mut report, &inst);
             return Ok(report);
         }
     }
