@@ -27,6 +27,15 @@ pub struct ServerReport {
     pub calls_7d: u64,
     pub last_call: Option<DateTime<Utc>>,
     pub days_since_last: Option<i64>,
+    /// True if this server was observed in at least one transcript. False
+    /// means it is configured but has never been loaded — the prime prune
+    /// candidate: nonzero configuration cost, zero observed usage.
+    #[serde(default = "default_true")]
+    pub transcript_seen: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,9 +116,35 @@ pub fn build(scan: ScanResult, installed: &Installed, cfg: &Config) -> Result<Re
                 calls_7d: s.calls_7d,
                 last_call: s.last_call,
                 days_since_last,
+                transcript_seen: true,
             }
         })
         .collect();
+
+    // Synthesize entries for configured servers that never appeared in any
+    // transcript. Prime prune candidates: configured cost, zero observed
+    // usage. Plugin-provided server names are not enumerable from config, so
+    // they are excluded from this synthesis.
+    let seen: std::collections::HashSet<&str> =
+        servers.iter().map(|s| s.server.as_str()).collect();
+    let mut synthetic: Vec<ServerReport> = installed
+        .all_named()
+        .filter(|name| !seen.contains(name.as_str()))
+        .map(|name| ServerReport {
+            server: name.clone(),
+            status: Status::Unused,
+            source: installed.classify(name),
+            calls_total: 0,
+            calls_30d: 0,
+            calls_14d: 0,
+            calls_7d: 0,
+            last_call: None,
+            days_since_last: None,
+            transcript_seen: false,
+        })
+        .collect();
+    servers.append(&mut synthetic);
+
     servers.sort_by(|a, b| {
         b.calls_30d
             .cmp(&a.calls_30d)
@@ -263,7 +298,7 @@ fn print_rows(rows: &[&ServerReport]) {
         } else {
             s.server.clone()
         };
-        let tag = source_tag(s.source);
+        let tag = source_tag(s);
         let pad = name_w.saturating_sub(s.server.len());
         println!(
             "     {}{}  {:>5}   {:<10}  {}{}",
@@ -277,13 +312,17 @@ fn print_rows(rows: &[&ServerReport]) {
     }
 }
 
-fn source_tag(source: ServerSource) -> String {
-    match source {
+fn source_tag(s: &ServerReport) -> String {
+    let mut tag = match s.source {
         ServerSource::UserConfig => String::new(),
         ServerSource::ProjectConfig => format!("  {}", style::dim("[project]")),
         ServerSource::Plugin => format!("  {}", style::violet("[plugin]")),
         ServerSource::Historical => format!("  {}", style::dim("[stale]")),
+    };
+    if !s.transcript_seen {
+        tag.push_str(&format!("  {}", style::amber("never loaded")));
     }
+    tag
 }
 
 fn print_footer(view: &ReportView) {
@@ -384,6 +423,9 @@ pub fn print_idle_view(view: &ReportView) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scan::{ScanResult, ServerStats};
+    use chrono::Utc;
+    use std::collections::HashMap;
 
     fn cfg() -> Config {
         Config {
@@ -441,5 +483,76 @@ mod tests {
         // Should classify as Ok (just called), not wrap around into Alert.
         assert_eq!(classify(10, Some(-3), &cfg()), Status::Ok);
         assert_eq!(classify(10, Some(-365), &cfg()), Status::Ok);
+    }
+
+    fn empty_scan() -> ScanResult {
+        ScanResult {
+            servers: HashMap::new(),
+            transcripts_scanned: 0,
+            scanned_at: Utc::now(),
+        }
+    }
+
+    fn installed_with(user: &[&str], project: &[&str]) -> Installed {
+        let mut i = Installed::default();
+        for s in user {
+            i.user.insert((*s).into());
+        }
+        for s in project {
+            i.project.insert((*s).into());
+        }
+        i
+    }
+
+    #[test]
+    fn build_synthesizes_never_loaded_for_configured_servers_absent_from_scan() {
+        let installed = installed_with(&["vexp"], &["figma-remote-mcp", "statsig"]);
+        let report = build(empty_scan(), &installed, &cfg()).unwrap();
+
+        // All three configured servers should appear as synthesized entries.
+        let names: Vec<&str> = report.servers.iter().map(|s| s.server.as_str()).collect();
+        assert!(names.contains(&"vexp"));
+        assert!(names.contains(&"figma-remote-mcp"));
+        assert!(names.contains(&"statsig"));
+
+        for s in &report.servers {
+            assert!(!s.transcript_seen, "synthesized entries are not transcript-seen");
+            assert_eq!(s.status, Status::Unused);
+            assert_eq!(s.calls_total, 0);
+            assert!(s.last_call.is_none());
+        }
+    }
+
+    #[test]
+    fn build_does_not_synthesize_when_server_already_in_scan() {
+        let mut scan = empty_scan();
+        scan.servers.insert(
+            "vexp".into(),
+            ServerStats {
+                server: "vexp".into(),
+                calls_total: 5,
+                ..Default::default()
+            },
+        );
+        let installed = installed_with(&["vexp"], &[]);
+        let report = build(scan, &installed, &cfg()).unwrap();
+
+        assert_eq!(report.servers.len(), 1);
+        let vexp = &report.servers[0];
+        assert_eq!(vexp.server, "vexp");
+        assert!(vexp.transcript_seen, "scan-derived entries are transcript-seen");
+        assert_eq!(vexp.calls_total, 5);
+    }
+
+    #[test]
+    fn build_tags_synthesized_entries_with_correct_source() {
+        let installed = installed_with(&["user-only"], &["project-only"]);
+        let report = build(empty_scan(), &installed, &cfg()).unwrap();
+
+        let user = report.servers.iter().find(|s| s.server == "user-only").unwrap();
+        assert_eq!(user.source, ServerSource::UserConfig);
+
+        let proj = report.servers.iter().find(|s| s.server == "project-only").unwrap();
+        assert_eq!(proj.source, ServerSource::ProjectConfig);
     }
 }

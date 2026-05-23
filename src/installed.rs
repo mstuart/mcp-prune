@@ -46,6 +46,13 @@ impl Installed {
             ServerSource::Historical
         }
     }
+
+    /// All explicitly-named configured servers (user and project scope).
+    /// Plugin-provided servers are excluded — their server names are defined
+    /// by the plugin at load time, so we can't enumerate them from config.
+    pub fn all_named(&self) -> impl Iterator<Item = &String> {
+        self.user.iter().chain(self.project.iter())
+    }
 }
 
 pub fn load() -> Installed {
