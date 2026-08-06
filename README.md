@@ -1,8 +1,14 @@
-# mcp-prune
+<div align="center">
+  <img src="docs/assets/logo.svg" alt="mcp-prune — Audit MCP server usage from Claude Code transcripts. Find idle servers to prune." width="720">
+</div>
 
-[![CI](https://github.com/mstuart/mcp-prune/actions/workflows/ci.yml/badge.svg)](https://github.com/mstuart/mcp-prune/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<p align="center"><strong>Audit MCP server usage from Claude Code transcripts. Find idle servers to prune.</strong></p>
 
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
+
+---
 Audit MCP server usage from Claude Code transcripts. Find idle servers so you
 can prune them and stop loading their tool schemas into every conversation.
 
