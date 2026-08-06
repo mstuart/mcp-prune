@@ -5,6 +5,7 @@
 <p align="center"><strong>Audit MCP server usage from Claude Code transcripts. Find idle servers to prune.</strong></p>
 
 <p align="center">
+  <a href="https://github.com/mstuart/mcp-prune/actions/workflows/ci.yml"><img src="https://github.com/mstuart/mcp-prune/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
