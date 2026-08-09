@@ -7,6 +7,8 @@
 <p align="center">
   <a href="https://github.com/mstuart/mcp-prune/actions/workflows/ci.yml"><img src="https://github.com/mstuart/mcp-prune/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://deepwiki.com/mstuart/mcp-prune"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://socket.dev/npm/package/mcp-prune"><img src="https://socket.dev/api/badge/npm/package/mcp-prune" alt="Socket"></a>
 </p>
 
 ---
