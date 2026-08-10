@@ -2,7 +2,12 @@
   "name": "mcp-prune",
   "version": "0.1.6",
   "description": "Audit MCP server usage from Claude Code transcripts. Find idle servers to prune.",
-  "keywords": ["mcp", "claude-code", "anthropic", "audit"],
+  "keywords": [
+    "mcp",
+    "claude-code",
+    "anthropic",
+    "audit"
+  ],
   "homepage": "https://github.com/mstuart/mcp-prune#readme",
   "bugs": {
     "url": "https://github.com/mstuart/mcp-prune/issues"
@@ -22,11 +27,23 @@
     "README.md"
   ],
   "scripts": {
+    "check": "ultracite check",
+    "fix": "ultracite fix",
     "postinstall": "node install.js"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "ultracite": "7.10.2"
   },
   "engines": {
     "node": ">=16"
   },
-  "os": ["darwin", "linux"],
-  "cpu": ["x64", "arm64"]
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
 }
