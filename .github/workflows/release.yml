@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build:
@@ -81,9 +82,7 @@ jobs:
           cd npm
           npm version --no-git-tag-version --allow-same-version "$TAG"
 
-      - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish with provenance
         run: |
           cd npm
-          npm publish --access public
+          npm publish --access public --provenance
