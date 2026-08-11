@@ -29,7 +29,10 @@
   "scripts": {
     "check": "ultracite check",
     "fix": "ultracite fix",
-    "postinstall": "node install.js"
+    "postinstall": "node install.js",
+    "packcheck": "npm pack --dry-run",
+    "test": "node --test",
+    "test:pack": "node --test test/packed-smoke.test.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.6",
