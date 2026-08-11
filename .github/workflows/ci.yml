@@ -41,3 +41,18 @@ jobs:
         run: cargo test --all-features
       - name: Build release
         run: cargo build --release
+      - name: Test npm wrapper
+        run: npm test
+        working-directory: npm
+      - name: Check npm package
+        run: npm run packcheck
+        working-directory: npm
+
+  supply-chain:
+    name: Rust supply-chain audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
