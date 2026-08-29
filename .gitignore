@@ -1,3 +1,5 @@
 /target
+npm/bin/mcp-prune-bin
+npm/node_modules/
 **/*.rs.bk
 .DS_Store
