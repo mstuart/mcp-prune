@@ -6,7 +6,8 @@ can prune them and stop loading their tool schemas into every conversation.
 This npm package wraps the Rust binary distributed via GitHub Releases.
 
 Requires Node.js 16 or newer. Supported prebuilt targets are macOS (Apple
-silicon and Intel) and Linux (x64 and ARM64).
+silicon and Intel) and glibc-based Linux (x64 and ARM64). Linux systems using
+musl, including Alpine, require a source build.
 
 ## Install
 
